@@ -8,28 +8,30 @@ import { CategoryChips } from "@/components/nexus/category-chips"
 import { useNexusData } from "@/components/nexus/nexus-data-provider"
 import { ScreenCard } from "@/components/nexus/screen-card"
 import { Button } from "@/components/ui/button"
-import { platforms } from "@/lib/nexus-data"
+import { getActiveAppFromParams, platforms } from "@/lib/nexus-data"
 
 function BrowsePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { error, loading, screenCards } = useNexusData()
 
-  const currentApp = (searchParams.get("app") || "consumer") as "consumer" | "merchant" | "driver"
-  const activeApp = ["consumer", "merchant", "driver"].includes(currentApp) ? currentApp : "consumer"
-  const activeCategory = searchParams.get("category") || "All"
+  const activeApp = getActiveAppFromParams(searchParams)
+  const rawCategory = searchParams.get("category")
+  const activeCategory = !rawCategory || rawCategory === "All" ? "All Teams" : rawCategory
   const searchQuery = (searchParams.get("q") || "").toLowerCase().trim()
 
   const currentPlatformInfo = React.useMemo(() => {
-    return platforms.find((p) => p.slug === activeApp) || platforms[0]
+    return activeApp === "all"
+      ? { name: "All Apps", description: "All Gojek application screens." }
+      : platforms.find((p) => p.slug === activeApp) || platforms[0]
   }, [activeApp])
 
   const filteredScreens = React.useMemo(() => {
     return screenCards.filter((screen) => {
       if (searchQuery) return screen.searchText.includes(searchQuery)
 
-      if (screen.app !== activeApp) return false
-      if (activeCategory !== "All" && screen.category !== activeCategory) {
+      if (activeApp !== "all" && screen.app !== activeApp) return false
+      if (activeCategory !== "All Teams" && screen.category !== activeCategory) {
         return false
       }
 
@@ -82,13 +84,13 @@ function BrowsePageContent() {
               {error || (
                 searchQuery
                   ? <>No screens match &quot;{searchQuery}&quot; across all apps.</>
-                  : <>No screens match {activeCategory !== "All" ? `category "${activeCategory}"` : currentPlatformInfo.name}.</>
+                  : <>No screens match {activeCategory !== "All Teams" ? `category "${activeCategory}"` : currentPlatformInfo.name}.</>
               )}
             </p>
             <Button
               className="mt-6 rounded-full bg-[#008a0d] hover:bg-[#00720b]"
               onClick={() => {
-                router.push(`/?app=${activeApp}`)
+                router.push(activeApp === "all" ? "/" : `/?app=${activeApp}`)
               }}
             >
               Reset Filters

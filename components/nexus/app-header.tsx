@@ -6,7 +6,7 @@ import { useRouter, useSearchParams } from "next/navigation"
 import { Search, X } from "lucide-react"
 
 import { useNexusData } from "@/components/nexus/nexus-data-provider"
-import { getActiveAppFromParams, platforms } from "@/lib/nexus-data"
+import { appTabs, getActiveAppFromParams } from "@/lib/nexus-data"
 import { cn } from "@/lib/utils"
 
 function SearchInput({
@@ -70,7 +70,6 @@ function AppHeaderContent({ className }: { className?: string }) {
   const router = useRouter()
   const searchParams = useSearchParams()
   const currentQ = searchParams.get("q") || ""
-  const isGlobalSearch = Boolean(currentQ.trim())
   const { screenCards } = useNexusData()
 
   const activeSlug = React.useMemo(
@@ -80,7 +79,8 @@ function AppHeaderContent({ className }: { className?: string }) {
   )
 
   const handleSearch = (value: string) => {
-    const params = new URLSearchParams({ app: activeSlug })
+    const params = new URLSearchParams()
+    if (activeSlug !== "all") params.set("app", activeSlug)
     if (value.trim()) {
       params.set("q", value.trim())
     }
@@ -88,7 +88,7 @@ function AppHeaderContent({ className }: { className?: string }) {
   }
 
   const handleClearSearch = () => {
-    router.replace(`/?app=${activeSlug}`, { scroll: false })
+    router.replace(activeSlug === "all" ? "/" : `/?app=${activeSlug}`, { scroll: false })
   }
 
   return (
@@ -125,8 +125,8 @@ function AppHeaderContent({ className }: { className?: string }) {
               aria-label="Application sections"
               className="flex h-11 min-w-0 items-center gap-1 overflow-x-auto rounded-full bg-[#f4f4f4] p-1 text-sm font-semibold"
             >
-              {platforms.map((platform) => {
-                const isActive = !isGlobalSearch && activeSlug === platform.slug
+              {appTabs.map((platform) => {
+                const isActive = activeSlug === platform.slug
                 return (
                   <Link
                     key={platform.slug}
@@ -134,7 +134,7 @@ function AppHeaderContent({ className }: { className?: string }) {
                     className={cn(
                       "flex h-full shrink-0 items-center rounded-full px-4 text-sm font-semibold leading-none transition-all duration-200",
                       isActive
-                        ? "bg-white text-black font-bold shadow-xs"
+                        ? "bg-[#008a0d] text-white font-bold shadow-xs"
                         : "text-[#666666] hover:text-black hover:bg-black/5"
                     )}
                   >

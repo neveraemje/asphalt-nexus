@@ -6,6 +6,14 @@ export type ProductPlatform = {
 }
 
 export type AppSlug = "consumer" | "merchant" | "driver"
+export type AppFilter = AppSlug | "all"
+
+export type AppNavigationItem = {
+  name: string
+  slug: AppFilter
+  href: string
+  description: string
+}
 
 export type ScreenCard = {
   id: string
@@ -86,6 +94,16 @@ export const platforms: ProductPlatform[] = [
   },
 ]
 
+export const appTabs: AppNavigationItem[] = [
+  {
+    name: "All",
+    slug: "all",
+    href: "/",
+    description: "All Gojek application screens.",
+  },
+  ...platforms,
+]
+
 // Normalizes the persisted app label into the URL slug used by the website.
 export function resolveAppSlug(app?: string | null): AppSlug {
   const normalized = (app || "").toLowerCase()
@@ -95,8 +113,11 @@ export function resolveAppSlug(app?: string | null): AppSlug {
 }
 
 // Resolves the active product directly from the current query parameters.
-export function getActiveAppFromParams(searchParams: SearchParamReader): AppSlug {
-  return resolveAppSlug(searchParams.get("app"))
+export function getActiveAppFromParams(searchParams: SearchParamReader): AppFilter {
+  const app = searchParams.get("app")
+  if (!app || app === "all") return "all"
+  if (app === "consumer" || app === "merchant" || app === "driver") return app
+  return "all"
 }
 
 // Groups individual database records into product feature cards.

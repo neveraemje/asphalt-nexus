@@ -5,28 +5,29 @@ import { useRouter, useSearchParams } from "next/navigation"
 
 import { useNexusData } from "@/components/nexus/nexus-data-provider"
 import { cn } from "@/lib/utils"
+import { getActiveAppFromParams } from "@/lib/nexus-data"
 
 function CategoryChipsContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
   const { screenCards } = useNexusData()
 
-  const currentApp = (searchParams.get("app") || "consumer") as "consumer" | "merchant" | "driver"
-  const activeApp = ["consumer", "merchant", "driver"].includes(currentApp) ? currentApp : "consumer"
-  const currentCategory = searchParams.get("category") || "All"
+  const activeApp = getActiveAppFromParams(searchParams)
+  const rawCategory = searchParams.get("category")
+  const currentCategory = !rawCategory || rawCategory === "All" ? "All Teams" : rawCategory
 
   const availableCategories = React.useMemo(() => {
     const list = Array.from(new Set(
       screenCards
-        .filter((screen) => screen.app === activeApp)
+        .filter((screen) => activeApp === "all" || screen.app === activeApp)
         .map((screen) => screen.category)
     ))
-    return ["All", ...list]
+    return ["All Teams", ...list]
   }, [activeApp, screenCards])
 
   const handleSelect = (category: string) => {
     const params = new URLSearchParams(searchParams.toString())
-    if (category === "All") {
+    if (category === "All Teams") {
       params.delete("category")
     } else {
       params.set("category", category)
@@ -36,16 +37,18 @@ function CategoryChipsContent() {
 
   // Count screens per category for this app
   const getCategoryCount = (category: string) => {
-    if (category === "All") {
-      return screenCards.filter((s) => s.app === activeApp).length
+    if (category === "All Teams") {
+      return screenCards.filter((s) => activeApp === "all" || s.app === activeApp).length
     }
-    return screenCards.filter((s) => s.app === activeApp && s.category === category).length
+    return screenCards.filter((s) => (
+      (activeApp === "all" || s.app === activeApp) && s.category === category
+    )).length
   }
 
   return (
     <div className="mx-auto flex w-full max-w-[1440px] items-center gap-3 overflow-x-auto px-5 py-6 sm:px-8 lg:px-10">
       {availableCategories.map((category) => {
-        const isSelected = currentCategory === category || (currentCategory === "All" && category === "All")
+        const isSelected = currentCategory === category
         const count = getCategoryCount(category)
 
         return (

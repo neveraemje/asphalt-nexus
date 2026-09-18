@@ -150,9 +150,9 @@ function buildInformationArchitectureNode(
   const orderedChildren = snapshot.type === "INSTANCE" && !shouldExpandCompositeInstance(snapshot, context)
     ? []
     : groupRepeatedSiblings(
-        sortSnapshotsByContentOrder(snapshot.children || [], snapshot),
-        snapshot
-      )
+      sortSnapshotsByContentOrder(snapshot.children || [], snapshot),
+      snapshot
+    )
   let children = orderedChildren
     .map((child, index) => buildInformationArchitectureNode(child, {
       depth: context.depth + 1,
@@ -490,7 +490,7 @@ function groupRepeatedSiblings(children: NodeSnapshot[], parent: NodeSnapshot) {
   })
 }
 
-// Distinguishes true repeated content from unrelated sections with similar geometry.
+// Distinguishes true repeated content from unrelated sections with similar geometry ok.
 function shouldGroupRepeatedSet(siblings: NodeSnapshot[], parent: NodeSnapshot) {
   const parentName = humanizeLayerName(stripNamingConvention(parent.name)).toLowerCase()
   if (/carousel|collection|grid|list|feed|cards|results|recommend/.test(parentName)) return true

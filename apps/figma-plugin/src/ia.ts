@@ -490,7 +490,7 @@ function groupRepeatedSiblings(children: NodeSnapshot[], parent: NodeSnapshot) {
   })
 }
 
-// Distinguishes true repeated content from unrelated sections with similar geometry ok.
+// Distinguishes true repeated content from unrelated sections with similar geometry ok ok.
 function shouldGroupRepeatedSet(siblings: NodeSnapshot[], parent: NodeSnapshot) {
   const parentName = humanizeLayerName(stripNamingConvention(parent.name)).toLowerCase()
   if (/carousel|collection|grid|list|feed|cards|results|recommend/.test(parentName)) return true

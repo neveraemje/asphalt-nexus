@@ -1,0 +1,14 @@
+{
+  "name": "Asphalt Nexus",
+  "id": "1682587208782340277",
+  "api": "1.0.0",
+  "main": "dist/code.js",
+  "ui": "dist/ui.html",
+  "editorType": ["figma"],
+  "documentAccess": "dynamic-page",
+  "enablePrivatePluginApi": true,
+  "permissions": ["currentuser"],
+  "networkAccess": {
+    "allowedDomains": ["https://aeyiwayubsfjbrwfreqn.supabase.co"]
+  }
+}

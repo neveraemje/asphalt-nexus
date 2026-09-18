@@ -7,13 +7,13 @@ import { useSearchParams } from "next/navigation"
 import {
   ArrowLeft,
   ArrowRight,
-  Box,
   ExternalLink,
-  Layers,
   X,
 } from "lucide-react"
 
 import { Button, buttonVariants } from "@/components/ui/button"
+import { InformationArchitectureTree } from "@/components/nexus/information-architecture-tree"
+import { useNexusData } from "@/components/nexus/nexus-data-provider"
 import { PhonePreview } from "@/components/nexus/phone-preview"
 import {
   formatViews,
@@ -29,22 +29,79 @@ function DetailModalContent() {
   const screenId = searchParams.get("id")
   const variant = searchParams.get("variant")
   const previewScrollRef = React.useRef<HTMLDivElement>(null)
-  const screen = getScreenById(screenId)
-  const variants = getGalleryScreens(screenId)
-  const activeVariant = getGalleryVariant(screenId, variant)
-
-  const safeVariantNum = activeVariant.id
-  const prevVariant = safeVariantNum > 1 ? safeVariantNum - 1 : variants.length
-  const nextVariant = safeVariantNum < variants.length ? safeVariantNum + 1 : 1
-
-  const appInfo = platforms.find((p) => p.slug === screen.app) || platforms[0]
-  const title = variant ? `${activeVariant.title} (Variant ${safeVariantNum})` : activeVariant.title
-  const closeHref = `/gallery/home-screen?id=${screen.id}`
-  const categoryHref = `/?app=${screen.app}&category=${encodeURIComponent(screen.category)}`
+  const viewedScreenRef = React.useRef<string | null>(null)
+  const { incrementMetric, loading, records, screenCards } = useNexusData()
+  const screen = getScreenById(screenCards, screenId)
+  const variants = getGalleryScreens(records, screenId)
+  const activeVariant = getGalleryVariant(variants, variant)
+  const activeIndex = activeVariant
+    ? Math.max(0, variants.findIndex((item) => item.id === activeVariant.id))
+    : 0
+  const prevVariant = variants[(activeIndex - 1 + variants.length) % variants.length]?.id
+  const nextVariant = variants[(activeIndex + 1) % variants.length]?.id
 
   React.useEffect(() => {
     previewScrollRef.current?.scrollTo({ top: 0 })
-  }, [screen.id, safeVariantNum])
+  }, [activeVariant?.id, screen?.id])
+
+  React.useEffect(() => {
+    if (!activeVariant?.id || viewedScreenRef.current === activeVariant.id) return
+
+    const viewSessionKey = `nexus-screen-viewed:${activeVariant.id}`
+    viewedScreenRef.current = activeVariant.id
+
+    try {
+      if (window.sessionStorage.getItem(viewSessionKey)) return
+      window.sessionStorage.setItem(viewSessionKey, "true")
+    } catch {
+      // The in-memory guard still prevents duplicate counts during this mount.
+    }
+
+    void incrementMetric(activeVariant.id, "view").catch((metricError) => {
+      try {
+        window.sessionStorage.removeItem(viewSessionKey)
+      } catch {
+        // Storage can be unavailable in privacy-restricted browser contexts.
+      }
+      console.warn("Could not count the screen view.", metricError)
+    })
+  }, [activeVariant?.id, incrementMetric])
+
+  if (loading) return null
+
+  if (!screen || !activeVariant) {
+    return (
+      <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/60 p-6">
+        <div className="rounded-[20px] bg-white p-8 text-center shadow-xl">
+          <h1 className="text-xl font-semibold">Screen not found</h1>
+          <Link className="mt-5 inline-flex text-sm font-semibold text-[#008a0d]" href="/">
+            Return to library
+          </Link>
+        </div>
+      </div>
+    )
+  }
+
+  const appInfo = platforms.find((p) => p.slug === screen.app) || platforms[0]
+  const title = activeVariant.title
+  const closeHref = `/gallery/home-screen?id=${encodeURIComponent(screen.id)}`
+  const categoryHref = `/?app=${screen.app}&category=${encodeURIComponent(screen.category)}`
+  const updatedAt = new Date(activeVariant.updatedAt).toLocaleDateString("en-US", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  })
+  const creatorName = activeVariant.createdByName || "Nexus contributor"
+  const creatorInitial = creatorName.trim().charAt(0).toUpperCase() || "N"
+
+  // Opens the exact source frame that was saved when this screen was pushed.
+  function openSourceScreen() {
+    if (!activeVariant.sourceUrl) return
+    window.open(activeVariant.sourceUrl, "_blank", "noopener,noreferrer")
+    void incrementMetric(activeVariant.id, "open").catch((metricError) => {
+      console.warn("Could not count the source open.", metricError)
+    })
+  }
 
   return (
     <div className="fixed inset-0 z-40 flex items-center justify-center overflow-hidden bg-[rgba(28,29,29,0.6)] p-3 backdrop-blur-xs animate-in fade-in duration-200 sm:p-6 lg:p-8">
@@ -54,14 +111,14 @@ function DetailModalContent() {
           <div className="shrink-0 z-20 flex items-center justify-between border-b border-[var(--nexus-border)] bg-[#f9f9f9] px-4 py-3.5 sm:px-8">
             <div className="flex min-w-0 items-center gap-2.5">
               <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#a6e8ff] text-base font-bold text-[#202020]">
-                J
+                {creatorInitial}
               </div>
               <div className="min-w-0">
                 <p className="truncate text-base font-bold leading-5 text-[#202020]">
-                  Jaison Justus
+                  {creatorName}
                 </p>
                 <p className="truncate text-xs leading-4 text-[#666666]">
-                  Last Update : Aug 2, 2026
+                  Last update: {updatedAt}
                 </p>
               </div>
             </div>
@@ -69,16 +126,11 @@ function DetailModalContent() {
             <div className="flex items-center gap-2 sm:gap-4">
               <div className="hidden items-center gap-2 sm:flex">
                 <Button
-                  onClick={() => alert("Item delete action")}
-                  className="h-10 w-[106px] rounded-[32px] border border-[var(--nexus-border)] bg-white px-5 text-sm font-semibold text-[#d60027] hover:bg-[#fff5f7] cursor-pointer"
-                >
-                  Delete
-                </Button>
-                <Button
-                  onClick={() => alert("Design pulled to Figma clipboard!")}
+                  disabled={!activeVariant.sourceUrl}
+                  onClick={openSourceScreen}
                   className="h-10 w-[106px] rounded-[32px] border border-[var(--nexus-border)] bg-white px-5 text-sm font-semibold text-[#202020] hover:bg-[#f1f1f1] cursor-pointer"
                 >
-                  Pull design
+                  Open screen
                 </Button>
               </div>
               <div className="hidden h-6 w-px bg-[var(--nexus-border)] sm:block" />
@@ -87,7 +139,8 @@ function DetailModalContent() {
                 className="size-10 shrink-0 rounded-full bg-[#e7e7e7] text-[#202020] hover:bg-[#dadada] cursor-pointer transition-transform active:scale-95"
                 size="icon-lg"
                 variant="secondary"
-                onClick={() => alert("Opening component in Figma...")}
+                disabled={!activeVariant.sourceUrl}
+                onClick={openSourceScreen}
               >
                 <Image
                   alt=""
@@ -101,7 +154,7 @@ function DetailModalContent() {
           </div>
 
           <Link
-            href={`/gallery/home-screen/detail?id=${screen.id}&variant=${prevVariant}`}
+            href={`/gallery/home-screen/detail?id=${encodeURIComponent(screen.id)}&variant=${encodeURIComponent(prevVariant || "")}`}
             aria-label="Previous screen"
             scroll={false}
             className={cn(
@@ -113,7 +166,7 @@ function DetailModalContent() {
           </Link>
 
           <Link
-            href={`/gallery/home-screen/detail?id=${screen.id}&variant=${nextVariant}`}
+            href={`/gallery/home-screen/detail?id=${encodeURIComponent(screen.id)}&variant=${encodeURIComponent(nextVariant || "")}`}
             aria-label="Next screen"
             scroll={false}
             className={cn(
@@ -174,7 +227,7 @@ function DetailModalContent() {
 
             <dl className="mt-5 flex gap-6">
               {[
-                [String(activeVariant.pulls), "Pulls"],
+                [String(activeVariant.pulls), "Open"],
                 [activeVariant.size, "Size"],
                 [formatViews(activeVariant.views), "Views"],
               ].map(([value, label]) => (
@@ -195,39 +248,20 @@ function DetailModalContent() {
               Information Architecture
             </h3>
 
-            <div className="mt-5 flex flex-col gap-6">
-              {activeVariant.architecture.map((group, index) => {
-                const Icon = index % 2 === 0 ? Layers : Box
-
-                return (
-                  <section className="relative pl-7" key={group.title}>
-                    <Icon className="absolute left-0 top-0.5 size-4.5 text-[#008a0d]" />
-                    <div className="absolute bottom-0 left-[8px] top-6 w-px bg-[#e0e0e0]" />
-                    <h4 className="truncate text-base font-semibold leading-5 text-[#202020]">
-                      {group.title}
-                    </h4>
-                    <ul className="mt-2.5 space-y-2">
-                      {group.items.map((item) => (
-                        <li
-                          className="flex items-center gap-2 text-[13px] font-medium leading-5 text-[#555555]"
-                          key={item}
-                        >
-                          <span className="size-1 rounded-full bg-zinc-300" />
-                          <span className="truncate">{item}</span>
-                        </li>
-                      ))}
-                    </ul>
-                  </section>
-                )
-              })}
+            <div className="mt-5">
+              <InformationArchitectureTree
+                regions={activeVariant.architecture}
+                screenName={title}
+              />
             </div>
 
             <Button
-              onClick={() => alert("Design pulled to Figma clipboard!")}
+              disabled={!activeVariant.sourceUrl}
+              onClick={openSourceScreen}
               className="mt-6 h-10 w-full rounded-[32px] border border-[var(--nexus-border)] bg-white px-4 text-sm font-semibold text-[#202020] hover:bg-[#f1f1f1] sm:hidden"
             >
               <ExternalLink className="size-4 mr-2" />
-              Pull design
+              Open screen
             </Button>
           </div>
         </aside>

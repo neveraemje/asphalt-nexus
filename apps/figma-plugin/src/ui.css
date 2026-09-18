@@ -1,0 +1,168 @@
+@import "tailwindcss";
+@source "./**/*.{ts,tsx,html}";
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: normal;
+  font-weight: 200;
+  src: url("__FONT_RUPA_EXTRALIGHT__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: italic;
+  font-weight: 200;
+  src: url("__FONT_RUPA_EXTRALIGHT_ITALIC__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: normal;
+  font-weight: 300;
+  src: url("__FONT_RUPA_LIGHT__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: italic;
+  font-weight: 300;
+  src: url("__FONT_RUPA_LIGHT_ITALIC__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: normal;
+  font-weight: 400;
+  src: url("__FONT_RUPA_REGULAR__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: italic;
+  font-weight: 400;
+  src: url("__FONT_RUPA_ITALIC__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: normal;
+  font-weight: 500;
+  src: url("__FONT_RUPA_MEDIUM__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: italic;
+  font-weight: 500;
+  src: url("__FONT_RUPA_MEDIUM_ITALIC__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: normal;
+  font-weight: 600;
+  src: url("__FONT_RUPA_SEMIBOLD__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: italic;
+  font-weight: 600;
+  src: url("__FONT_RUPA_SEMIBOLD_ITALIC__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: normal;
+  font-weight: 700;
+  src: url("__FONT_RUPA_BOLD__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: italic;
+  font-weight: 700;
+  src: url("__FONT_RUPA_BOLD_ITALIC__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: normal;
+  font-weight: 800;
+  src: url("__FONT_RUPA_EXTRABOLD__") format("opentype");
+}
+
+@font-face {
+  font-family: "Rupa Sans App";
+  font-style: italic;
+  font-weight: 800;
+  src: url("__FONT_RUPA_EXTRABOLD_ITALIC__") format("opentype");
+}
+
+@theme inline {
+  --font-sans: "Rupa Sans App", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --color-background: var(--nexus-background);
+  --color-foreground: var(--nexus-text);
+  --color-border: var(--nexus-border);
+  --color-input: var(--nexus-border);
+  --color-ring: var(--nexus-green);
+  --color-primary: var(--nexus-green);
+  --color-primary-foreground: #ffffff;
+  --color-secondary: #ffffff;
+  --color-secondary-foreground: var(--nexus-text);
+  --color-muted: var(--nexus-muted);
+  --color-muted-foreground: var(--nexus-caption);
+  --color-destructive: var(--nexus-error);
+  --radius-sm: 10px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-xl: 20px;
+  --radius-2xl: 24px;
+  --radius-3xl: 32px;
+}
+
+:root {
+  --nexus-background: #f2f2f4;
+  --nexus-surface: #ffffff;
+  --nexus-muted: #f9f9f9;
+  --nexus-preview: #e7e7e7;
+  --nexus-border: #e7e7e7;
+  --nexus-border-strong: #c9d1d5;
+  --nexus-text: #202020;
+  --nexus-caption: #4c4c4c;
+  --nexus-inactive: #8b8b8b;
+  --nexus-green: #008a0d;
+  --nexus-green-soft: #e8ffea;
+  --nexus-error: #d60027;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--nexus-background);
+  color: var(--nexus-text);
+  font-family: var(--font-sans);
+}
+
+button,
+input {
+  font-family: inherit;
+}
+
+button {
+  cursor: pointer;
+}
+
+.nexus-scrollbar {
+  scrollbar-color: var(--nexus-border-strong) transparent;
+  scrollbar-width: thin;
+}

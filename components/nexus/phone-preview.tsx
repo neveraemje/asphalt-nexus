@@ -75,7 +75,7 @@ export function PhonePreview({
     >
       <Image
         alt={alt}
-        className={cn("object-cover", sizes[size].image)}
+        className={cn("object-cover object-top", sizes[size].image)}
         height={size === "gallery" ? 548 : 519}
         priority={priority}
         src={image}

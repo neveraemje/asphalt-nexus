@@ -4,15 +4,18 @@ import * as React from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 
+import { useNexusData } from "@/components/nexus/nexus-data-provider"
 import { getActiveAppFromParams, platforms } from "@/lib/nexus-data"
 import { cn } from "@/lib/utils"
 
 function ProductTabsContent() {
   const searchParams = useSearchParams()
+  const { screenCards } = useNexusData()
 
   const activeSlug = React.useMemo(
-    () => getActiveAppFromParams(searchParams),
-    [searchParams]
+    () => screenCards.find((screen) => screen.id === searchParams.get("id"))?.app
+      || getActiveAppFromParams(searchParams),
+    [screenCards, searchParams]
   )
 
   return (

@@ -5,6 +5,7 @@ import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { ArrowLeft } from "lucide-react"
 
+import { useNexusData } from "@/components/nexus/nexus-data-provider"
 import { getScreenById, platforms } from "@/lib/nexus-data"
 import { buttonVariants } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
@@ -12,7 +13,16 @@ import { cn } from "@/lib/utils"
 function GalleryTitleBarContent() {
   const searchParams = useSearchParams()
   const screenId = searchParams.get("id")
-  const screen = getScreenById(screenId)
+  const { loading, screenCards } = useNexusData()
+  const screen = getScreenById(screenCards, screenId)
+
+  if (loading || !screen) {
+    return (
+      <div className="mx-auto flex min-h-20 w-full max-w-[1440px] items-center px-5 pt-6 text-sm text-[#666666] sm:px-8 lg:px-10">
+        {loading ? "Loading collection..." : "Collection not found."}
+      </div>
+    )
+  }
 
   const appInfo = platforms.find((p) => p.slug === screen.app) || platforms[0]
   const backHref = `/?app=${screen.app}&category=${encodeURIComponent(screen.category)}`

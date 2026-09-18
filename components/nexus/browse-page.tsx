@@ -2,17 +2,18 @@
 
 import * as React from "react"
 import { useSearchParams, useRouter } from "next/navigation"
-import { Layers, SearchX } from "lucide-react"
+import { SearchX } from "lucide-react"
 
 import { CategoryChips } from "@/components/nexus/category-chips"
-import { ProductTabs } from "@/components/nexus/product-tabs"
+import { useNexusData } from "@/components/nexus/nexus-data-provider"
 import { ScreenCard } from "@/components/nexus/screen-card"
 import { Button } from "@/components/ui/button"
-import { platforms, screenCards } from "@/lib/nexus-data"
+import { platforms } from "@/lib/nexus-data"
 
 function BrowsePageContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { error, loading, screenCards } = useNexusData()
 
   const currentApp = (searchParams.get("app") || "consumer") as "consumer" | "merchant" | "driver"
   const activeApp = ["consumer", "merchant", "driver"].includes(currentApp) ? currentApp : "consumer"
@@ -25,25 +26,16 @@ function BrowsePageContent() {
 
   const filteredScreens = React.useMemo(() => {
     return screenCards.filter((screen) => {
-      // Filter by App
-      if (screen.app !== activeApp) return false
+      if (searchQuery) return screen.searchText.includes(searchQuery)
 
-      // Filter by Category
+      if (screen.app !== activeApp) return false
       if (activeCategory !== "All" && screen.category !== activeCategory) {
         return false
       }
 
-      // Filter by Search Query
-      if (searchQuery) {
-        const matchesTitle = screen.title.toLowerCase().includes(searchQuery)
-        const matchesCategory = screen.category.toLowerCase().includes(searchQuery)
-        const matchesPlatform = screen.platform.toLowerCase().includes(searchQuery)
-        return matchesTitle || matchesCategory || matchesPlatform
-      }
-
       return true
     })
-  }, [activeApp, activeCategory, searchQuery])
+  }, [activeApp, activeCategory, screenCards, searchQuery])
 
   return (
     <main className="min-h-screen pb-20">
@@ -55,14 +47,20 @@ function BrowsePageContent() {
       {/* <ProductTabs /> */}
 
       {/* Category Pills */}
-      <CategoryChips />
+      {!searchQuery ? <CategoryChips /> : null}
 
       {/* Screen Cards Grid */}
       <section
         aria-label={`${currentPlatformInfo.name} Screens`}
         className="mx-auto w-full max-w-[1440px] px-5 sm:px-8 lg:px-10"
       >
-        {filteredScreens.length > 0 ? (
+        {loading ? (
+          <div className="grid grid-cols-1 gap-6 sm:grid-cols-2 lg:grid-cols-3">
+            {Array.from({ length: 6 }).map((_, index) => (
+              <div className="h-[460px] animate-pulse rounded-[24px] bg-zinc-200" key={index} />
+            ))}
+          </div>
+        ) : filteredScreens.length > 0 ? (
           <div className="grid grid-cols-1 gap-x-6 gap-y-10 sm:grid-cols-2 lg:grid-cols-3">
             {filteredScreens.map((screen, index) => (
               <ScreenCard
@@ -81,8 +79,11 @@ function BrowsePageContent() {
               No screens found
             </h2>
             <p className="mt-2 max-w-sm text-sm text-zinc-500">
-              No screens match {searchQuery ? `"${searchQuery}" in ` : ""}
-              {activeCategory !== "All" ? `category "${activeCategory}"` : currentPlatformInfo.name}.
+              {error || (
+                searchQuery
+                  ? <>No screens match &quot;{searchQuery}&quot; across all apps.</>
+                  : <>No screens match {activeCategory !== "All" ? `category "${activeCategory}"` : currentPlatformInfo.name}.</>
+              )}
             </p>
             <Button
               className="mt-6 rounded-full bg-[#008a0d] hover:bg-[#00720b]"

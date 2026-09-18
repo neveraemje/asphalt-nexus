@@ -3,21 +3,26 @@
 import * as React from "react"
 import { useRouter, useSearchParams } from "next/navigation"
 
-import { categoriesByApp, screenCards } from "@/lib/nexus-data"
+import { useNexusData } from "@/components/nexus/nexus-data-provider"
 import { cn } from "@/lib/utils"
 
 function CategoryChipsContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const { screenCards } = useNexusData()
 
   const currentApp = (searchParams.get("app") || "consumer") as "consumer" | "merchant" | "driver"
   const activeApp = ["consumer", "merchant", "driver"].includes(currentApp) ? currentApp : "consumer"
   const currentCategory = searchParams.get("category") || "All"
 
   const availableCategories = React.useMemo(() => {
-    const list = categoriesByApp[activeApp] || []
+    const list = Array.from(new Set(
+      screenCards
+        .filter((screen) => screen.app === activeApp)
+        .map((screen) => screen.category)
+    ))
     return ["All", ...list]
-  }, [activeApp])
+  }, [activeApp, screenCards])
 
   const handleSelect = (category: string) => {
     const params = new URLSearchParams(searchParams.toString())

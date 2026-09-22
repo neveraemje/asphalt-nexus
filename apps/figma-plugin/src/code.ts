@@ -72,10 +72,16 @@ figma.ui.onmessage = async (message: PluginMessage) => {
   }
 
   if (message.type === "get-records") {
-    figma.ui.postMessage({
-      records: await loadRecords(),
-      type: "records-loaded",
-    } satisfies PluginToUiMessage)
+    await safelyRun(
+      "load saved screens",
+      async () => {
+        figma.ui.postMessage({
+          records: await loadRecords(),
+          type: "records-loaded",
+        } satisfies PluginToUiMessage)
+      },
+      () => figma.ui.postMessage({ type: "records-load-failed" } satisfies PluginToUiMessage)
+    )
     return
   }
 
@@ -101,8 +107,15 @@ figma.ui.onmessage = async (message: PluginMessage) => {
     return
   }
 
-  if (message.type === "replace-record") {
-    await safelyRun("replace the stored screen", () => replaceStoredScreen(message))
+  if (message.type === "update-record") {
+    await safelyRun(
+      "update the stored screen",
+      () => updateStoredScreen(message),
+      () => figma.ui.postMessage({
+        recordId: message.recordId,
+        type: "record-update-failed",
+      } satisfies PluginToUiMessage)
+    )
     return
   }
 
@@ -303,6 +316,7 @@ async function pushSelectedScreens(message: PushScreensMessage) {
       previewImageDataUrl,
       pullCount: 0,
       screenName: screen.screenName,
+      tags: screen.tags || [],
       sourceFileKey: figma.fileKey,
       sourceFileName: figma.root.name,
       sourceNodeId: sourceNodeMetadata.id,
@@ -353,24 +367,48 @@ async function runScreenPushStage<T>(
   }
 }
 
-// Replaces an existing record with the current selected frame/component.
-async function replaceStoredScreen(
-  message: Extract<PluginMessage, { type: "replace-record" }>
+// Updates saved metadata and optionally replaces the source with one selected screen.
+async function updateStoredScreen(
+  message: Extract<PluginMessage, { type: "update-record" }>
 ) {
-  const selected = getSelectedExportableNode()
-  if (!selected) return
-
   const records = await loadRecords()
   const existing = records.find((record) => record.id === message.recordId)
   if (!existing) {
-    figma.notify("Stored screen record was not found.", { error: true })
+    throw new Error("Stored screen record was not found.")
+  }
+
+  const now = new Date().toISOString()
+  const metadataRecord: ScreenRecord = {
+    ...existing,
+    app: message.app,
+    featureName: message.featureName,
+    screenName: message.screenName,
+    tags: message.tags,
+    team: message.team,
+    updatedAt: now,
+  }
+
+  if (!message.replacement) {
+    const savedRecords = await saveRecords(records.map((record) => (
+      record.id === message.recordId ? metadataRecord : record
+    )))
+    const savedRecord = savedRecords.find((record) => record.id === message.recordId) || metadataRecord
+    figma.ui.postMessage({ record: savedRecord, type: "record-updated" } satisfies PluginToUiMessage)
+    figma.notify(`Updated ${message.screenName}.`)
     return
+  }
+
+  const selectedNodes = getSelectedPushableNodes()
+  const selected = selectedNodes.length === 1 && selectedNodes[0].id === message.replacement.nodeId
+    ? selectedNodes[0]
+    : null
+  if (!selected) {
+    throw new Error("Select exactly one frame, component, or instance to update the source.")
   }
 
   await loadAllPages()
   removeStorageNode(existing.storageNodeId)
 
-  const now = new Date().toISOString()
   const isStoragePush = isRunningInStorageFile()
   const sourceNodeMetadata = {
     deviceSize: getNodeSize(selected),
@@ -379,11 +417,9 @@ async function replaceStoredScreen(
     type: selected.type,
   }
   const nodeSnapshot = serializeNode(selected)
-  const informationArchitecture = generateInformationArchitecture(
-    message.screenName,
-    nodeSnapshot,
-    now
-  )
+  const informationArchitecture = message.replacement.keepInformationArchitecture
+    ? existing.informationArchitecture
+    : generateInformationArchitecture(message.screenName, nodeSnapshot, now)
   const layerNameRefinements = isFlattenedPreviewSnapshot(nodeSnapshot)
     ? []
     : refineSelectedLayerNames(selected, message.screenName)
@@ -392,33 +428,31 @@ async function replaceStoredScreen(
     ? await createEditableStorageResource(selected, message, message.recordId)
     : { componentKey: undefined, nodeId: undefined }
   const nextRecord: ScreenRecord = {
-    ...existing,
-    app: message.app,
+    ...metadataRecord,
     componentKey: resource.componentKey,
     deviceSize: sourceNodeMetadata.deviceSize,
-    featureName: message.featureName,
     informationArchitecture,
     layerNameRefinements,
     nodeSnapshot,
     previewImageDataUrl,
-    screenName: message.screenName,
     sourceFileKey: figma.fileKey,
     sourceFileName: figma.root.name,
     sourceNodeId: sourceNodeMetadata.id,
     sourceNodeName: sourceNodeMetadata.name,
     sourceNodeType: sourceNodeMetadata.type,
-    sourceNodeUrl: createSourceNodeUrl(message.sourceUrl, sourceNodeMetadata.id) || existing.sourceNodeUrl,
+    sourceNodeUrl: createSourceNodeUrl(
+      message.replacement.sourceUrl,
+      sourceNodeMetadata.id
+    ) || existing.sourceNodeUrl,
     status: isStoragePush ? "stored" : "pending_storage",
     storageFileKey: isStoragePush ? figma.fileKey : storageTarget.fileKey,
     storageFileName: storageTarget.fileName,
     storageFileUrl: storageTarget.fileUrl,
     storageNodeId: resource.nodeId,
     storagePageName: message.featureName,
-    team: message.team,
-    updatedAt: now,
   }
 
-  console.log("[Asphalt Nexus] replace-record saved", {
+  console.log("[Asphalt Nexus] update-record saved", {
     recordId: nextRecord.id,
     screenName: nextRecord.screenName,
     sourceFileKey: nextRecord.sourceFileKey,
@@ -426,9 +460,12 @@ async function replaceStoredScreen(
     sourceNodeUrl: nextRecord.sourceNodeUrl,
   })
 
-  await saveRecords(records.map((record) => (record.id === message.recordId ? nextRecord : record)))
-  figma.ui.postMessage({ record: nextRecord, type: "record-upserted" } satisfies PluginToUiMessage)
-  figma.notify(isStoragePush ? `Replaced ${message.screenName}.` : `Saved ${message.screenName} as pending storage.`)
+  const savedRecords = await saveRecords(records.map((record) => (
+    record.id === message.recordId ? nextRecord : record
+  )))
+  const savedRecord = savedRecords.find((record) => record.id === message.recordId) || nextRecord
+  figma.ui.postMessage({ record: savedRecord, type: "record-updated" } satisfies PluginToUiMessage)
+  figma.notify(isStoragePush ? `Updated ${message.screenName}.` : `Updated ${message.screenName} as pending storage.`)
 }
 
 // Persists manual IA labels and tree changes on the existing screen record.
@@ -510,7 +547,7 @@ async function incrementPullCount(recordId?: string) {
   }
 
   await saveRecords(records.map((record) => (record.id === recordId ? nextRecord : record)))
-  figma.ui.postMessage({ record: nextRecord, type: "record-upserted" } satisfies PluginToUiMessage)
+  figma.ui.postMessage({ record: nextRecord, type: "record-counts-updated" } satisfies PluginToUiMessage)
 }
 
 // Persists one detail-screen view without changing the current UI route.
@@ -1149,7 +1186,7 @@ async function loadRecords(): Promise<ScreenRecord[]> {
 // Writes the complete shared collection to Supabase.
 async function saveRecords(records: ScreenRecord[]) {
   await clearLegacyLocalRecords()
-  await saveDatabaseRecords(records)
+  return saveDatabaseRecords(records)
 }
 
 // Removes old clientStorage records once so the database starts as the only source of truth.

@@ -47,6 +47,7 @@ export type NexusScreenRecord = {
   screenName: string
   sourceNodeUrl?: string
   status: string
+  tags?: string[]
   team: string
   updatedAt: string
   viewCount: number
@@ -141,7 +142,7 @@ export function recordsToScreenCards(records: NexusScreenRecord[]): ScreenCard[]
       image: first.previewImageDataUrl,
       platform: first.team,
       searchText: groupedRecords
-        .flatMap((record) => [record.screenName, record.featureName, record.team, record.app])
+        .flatMap((record) => getRecordSearchTerms(record))
         .join(" ")
         .toLowerCase(),
       title: first.featureName,
@@ -193,4 +194,41 @@ export function formatViews(value: number) {
 // Builds a stable collection identity from the app, team, and feature hierarchy.
 function createCollectionId(record: NexusScreenRecord) {
   return `${resolveAppSlug(record.app)}:${record.team}:${record.featureName}`
+}
+
+export function getScreenDetailHref(record: NexusScreenRecord) {
+  return `/gallery/home-screen/detail?id=${encodeURIComponent(createCollectionId(record))}&variant=${encodeURIComponent(record.id)}`
+}
+
+export function getScreenSearchText(record: NexusScreenRecord) {
+  return getScreenSearchTerms(record).join(" ").toLowerCase()
+}
+
+function getRecordSearchTerms(record: NexusScreenRecord) {
+  return [
+    record.screenName,
+    record.featureName,
+    ...getSharedScreenSearchTerms(record),
+  ]
+}
+
+function getScreenSearchTerms(record: NexusScreenRecord) {
+  return [
+    record.screenName,
+    record.featureName,
+    ...getSharedScreenSearchTerms(record),
+  ]
+}
+
+function getSharedScreenSearchTerms(record: NexusScreenRecord) {
+  const tags = (record.tags || [])
+    .map((tag) => tag.trim().replace(/^#+/, ""))
+    .filter(Boolean)
+
+  return [
+    record.team,
+    record.app,
+    ...tags,
+    ...tags.map((tag) => `#${tag}`),
+  ]
 }

@@ -7,7 +7,6 @@ import { useSearchParams } from "next/navigation"
 import {
   ArrowLeft,
   ArrowRight,
-  ExternalLink,
   X,
 } from "lucide-react"
 
@@ -123,33 +122,23 @@ function DetailModalContent() {
               </div>
             </div>
 
-            <div className="flex items-center gap-2 sm:gap-4">
+            <div className="flex items-center gap-2 sm:gap-3">
               <div className="hidden items-center gap-2 sm:flex">
                 <Button
                   disabled={!activeVariant.sourceUrl}
                   onClick={openSourceScreen}
-                  className="h-10 w-[106px] rounded-[32px] border border-[var(--nexus-border)] bg-white px-5 text-sm font-semibold text-[#202020] hover:bg-[#f1f1f1] cursor-pointer"
+                  className="inline-flex h-10 min-w-[132px] items-center justify-center gap-2 rounded-[32px] border border-[var(--nexus-border)] bg-white px-4 text-sm font-semibold text-[#202020] hover:bg-[#f1f1f1] cursor-pointer"
                 >
+                  <Image
+                    alt=""
+                    aria-hidden="true"
+                    height={20}
+                    src="/icons/figma-logo.svg"
+                    width={20}
+                  />
                   Open screen
                 </Button>
               </div>
-              <div className="hidden h-6 w-px bg-[var(--nexus-border)] sm:block" />
-              <Button
-                aria-label="Open in Figma"
-                className="size-10 shrink-0 rounded-full bg-[#e7e7e7] text-[#202020] hover:bg-[#dadada] cursor-pointer transition-transform active:scale-95"
-                size="icon-lg"
-                variant="secondary"
-                disabled={!activeVariant.sourceUrl}
-                onClick={openSourceScreen}
-              >
-                <Image
-                  alt=""
-                  aria-hidden="true"
-                  height={24}
-                  src="/icons/figma-logo.svg"
-                  width={24}
-                />
-              </Button>
             </div>
           </div>
 
@@ -258,9 +247,15 @@ function DetailModalContent() {
             <Button
               disabled={!activeVariant.sourceUrl}
               onClick={openSourceScreen}
-              className="mt-6 h-10 w-full rounded-[32px] border border-[var(--nexus-border)] bg-white px-4 text-sm font-semibold text-[#202020] hover:bg-[#f1f1f1] sm:hidden"
+              className="mt-6 inline-flex h-10 w-full items-center justify-center gap-2 rounded-[32px] border border-[var(--nexus-border)] bg-white px-4 text-sm font-semibold text-[#202020] hover:bg-[#f1f1f1] sm:hidden"
             >
-              <ExternalLink className="size-4 mr-2" />
+              <Image
+                alt=""
+                aria-hidden="true"
+                height={20}
+                src="/icons/figma-logo.svg"
+                width={20}
+              />
               Open screen
             </Button>
           </div>

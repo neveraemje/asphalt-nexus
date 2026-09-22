@@ -628,7 +628,7 @@
         ))
       );
     }
-    if (persistedRecords.length === 0) return;
+    if (persistedRecords.length === 0) return persistedRecords;
     await supabaseRequest(`/rest/v1/${tableName}?on_conflict=id`, {
       body: JSON.stringify(persistedRecords.map((record) => ({
         app: record.app,
@@ -649,6 +649,7 @@
       },
       method: "POST"
     });
+    return persistedRecords;
   }
   async function persistPreviewImage(record) {
     if (!record.previewImageDataUrl.startsWith("data:")) return record;
@@ -667,7 +668,7 @@
     const { url } = getSupabaseConfig();
     return {
       ...record,
-      previewImageDataUrl: `${url}/storage/v1/object/public/${bucketName}/${encodeURIComponent(path)}`
+      previewImageDataUrl: `${url}/storage/v1/object/public/${bucketName}/${encodeURIComponent(path)}?v=${encodeURIComponent(record.updatedAt)}`
     };
   }
   function decodeDataUrl(dataUrl) {
@@ -685,7 +686,8 @@
     const marker = `/storage/v1/object/public/${bucketName}/`;
     const markerIndex = previewUrl.indexOf(marker);
     if (markerIndex === -1) return void 0;
-    return decodeURIComponent(previewUrl.slice(markerIndex + marker.length));
+    const path = previewUrl.slice(markerIndex + marker.length).split(/[?#]/, 1)[0];
+    return decodeURIComponent(path);
   }
 
   // apps/figma-plugin/src/code.ts
@@ -745,10 +747,16 @@
       return;
     }
     if (message.type === "get-records") {
-      figma.ui.postMessage({
-        records: await loadRecords(),
-        type: "records-loaded"
-      });
+      await safelyRun(
+        "load saved screens",
+        async () => {
+          figma.ui.postMessage({
+            records: await loadRecords(),
+            type: "records-loaded"
+          });
+        },
+        () => figma.ui.postMessage({ type: "records-load-failed" })
+      );
       return;
     }
     if (message.type === "get-selection") {
@@ -770,8 +778,15 @@
       postCurrentSelection();
       return;
     }
-    if (message.type === "replace-record") {
-      await safelyRun("replace the stored screen", () => replaceStoredScreen(message));
+    if (message.type === "update-record") {
+      await safelyRun(
+        "update the stored screen",
+        () => updateStoredScreen(message),
+        () => figma.ui.postMessage({
+          recordId: message.recordId,
+          type: "record-update-failed"
+        })
+      );
       return;
     }
     if (message.type === "update-information-architecture") {
@@ -928,6 +943,7 @@
         previewImageDataUrl,
         pullCount: 0,
         screenName: screen.screenName,
+        tags: screen.tags || [],
         sourceFileKey: figma.fileKey,
         sourceFileName: figma.root.name,
         sourceNodeId: sourceNodeMetadata.id,
@@ -967,18 +983,36 @@
       throw new Error(`${screenName} failed while ${stage}: ${getPluginErrorMessage(error)}`);
     }
   }
-  async function replaceStoredScreen(message) {
-    const selected = getSelectedExportableNode();
-    if (!selected) return;
+  async function updateStoredScreen(message) {
     const records = await loadRecords();
     const existing = records.find((record) => record.id === message.recordId);
     if (!existing) {
-      figma.notify("Stored screen record was not found.", { error: true });
+      throw new Error("Stored screen record was not found.");
+    }
+    const now = (/* @__PURE__ */ new Date()).toISOString();
+    const metadataRecord = {
+      ...existing,
+      app: message.app,
+      featureName: message.featureName,
+      screenName: message.screenName,
+      tags: message.tags,
+      team: message.team,
+      updatedAt: now
+    };
+    if (!message.replacement) {
+      const savedRecords2 = await saveRecords(records.map((record) => record.id === message.recordId ? metadataRecord : record));
+      const savedRecord2 = savedRecords2.find((record) => record.id === message.recordId) || metadataRecord;
+      figma.ui.postMessage({ record: savedRecord2, type: "record-updated" });
+      figma.notify(`Updated ${message.screenName}.`);
       return;
+    }
+    const selectedNodes = getSelectedPushableNodes();
+    const selected = selectedNodes.length === 1 && selectedNodes[0].id === message.replacement.nodeId ? selectedNodes[0] : null;
+    if (!selected) {
+      throw new Error("Select exactly one frame, component, or instance to update the source.");
     }
     await loadAllPages();
     removeStorageNode(existing.storageNodeId);
-    const now = (/* @__PURE__ */ new Date()).toISOString();
     const isStoragePush = isRunningInStorageFile();
     const sourceNodeMetadata = {
       deviceSize: getNodeSize(selected),
@@ -987,50 +1021,45 @@
       type: selected.type
     };
     const nodeSnapshot = serializeNode(selected);
-    const informationArchitecture = generateInformationArchitecture(
-      message.screenName,
-      nodeSnapshot,
-      now
-    );
+    const informationArchitecture = message.replacement.keepInformationArchitecture ? existing.informationArchitecture : generateInformationArchitecture(message.screenName, nodeSnapshot, now);
     const layerNameRefinements = isFlattenedPreviewSnapshot(nodeSnapshot) ? [] : refineSelectedLayerNames(selected, message.screenName);
     const previewImageDataUrl = await exportNodePreview(selected);
     const resource = isStoragePush ? await createEditableStorageResource(selected, message, message.recordId) : { componentKey: void 0, nodeId: void 0 };
     const nextRecord = {
-      ...existing,
-      app: message.app,
+      ...metadataRecord,
       componentKey: resource.componentKey,
       deviceSize: sourceNodeMetadata.deviceSize,
-      featureName: message.featureName,
       informationArchitecture,
       layerNameRefinements,
       nodeSnapshot,
       previewImageDataUrl,
-      screenName: message.screenName,
       sourceFileKey: figma.fileKey,
       sourceFileName: figma.root.name,
       sourceNodeId: sourceNodeMetadata.id,
       sourceNodeName: sourceNodeMetadata.name,
       sourceNodeType: sourceNodeMetadata.type,
-      sourceNodeUrl: createSourceNodeUrl(message.sourceUrl, sourceNodeMetadata.id) || existing.sourceNodeUrl,
+      sourceNodeUrl: createSourceNodeUrl(
+        message.replacement.sourceUrl,
+        sourceNodeMetadata.id
+      ) || existing.sourceNodeUrl,
       status: isStoragePush ? "stored" : "pending_storage",
       storageFileKey: isStoragePush ? figma.fileKey : storageTarget.fileKey,
       storageFileName: storageTarget.fileName,
       storageFileUrl: storageTarget.fileUrl,
       storageNodeId: resource.nodeId,
-      storagePageName: message.featureName,
-      team: message.team,
-      updatedAt: now
+      storagePageName: message.featureName
     };
-    console.log("[Asphalt Nexus] replace-record saved", {
+    console.log("[Asphalt Nexus] update-record saved", {
       recordId: nextRecord.id,
       screenName: nextRecord.screenName,
       sourceFileKey: nextRecord.sourceFileKey,
       sourceNodeId: nextRecord.sourceNodeId,
       sourceNodeUrl: nextRecord.sourceNodeUrl
     });
-    await saveRecords(records.map((record) => record.id === message.recordId ? nextRecord : record));
-    figma.ui.postMessage({ record: nextRecord, type: "record-upserted" });
-    figma.notify(isStoragePush ? `Replaced ${message.screenName}.` : `Saved ${message.screenName} as pending storage.`);
+    const savedRecords = await saveRecords(records.map((record) => record.id === message.recordId ? nextRecord : record));
+    const savedRecord = savedRecords.find((record) => record.id === message.recordId) || nextRecord;
+    figma.ui.postMessage({ record: savedRecord, type: "record-updated" });
+    figma.notify(isStoragePush ? `Updated ${message.screenName}.` : `Updated ${message.screenName} as pending storage.`);
   }
   async function updateInformationArchitecture(message) {
     const records = await loadRecords();
@@ -1092,7 +1121,7 @@
       updatedAt: (/* @__PURE__ */ new Date()).toISOString()
     };
     await saveRecords(records.map((record) => record.id === recordId ? nextRecord : record));
-    figma.ui.postMessage({ record: nextRecord, type: "record-upserted" });
+    figma.ui.postMessage({ record: nextRecord, type: "record-counts-updated" });
   }
   async function incrementViewCount(recordId) {
     const records = await loadRecords();
@@ -1493,25 +1522,13 @@
   }
   async function saveRecords(records) {
     await clearLegacyLocalRecords();
-    await saveDatabaseRecords(records);
+    return saveDatabaseRecords(records);
   }
   async function clearLegacyLocalRecords() {
     const wasCleared = await figma.clientStorage.getAsync(legacyStorageClearedKey);
     if (wasCleared) return;
     await figma.clientStorage.setAsync(metadataStorageKey, []);
     await figma.clientStorage.setAsync(legacyStorageClearedKey, true);
-  }
-  function getSelectedExportableNode() {
-    const [selected] = figma.currentPage.selection;
-    if (!selected) {
-      figma.notify("Select a frame or component first.", { error: true });
-      return null;
-    }
-    if (!selected.exportAsync) {
-      figma.notify("Selected layer cannot be exported. Select a frame or component.", { error: true });
-      return null;
-    }
-    return selected;
   }
   function getSelectedPushableNodes() {
     const supportedTypes = /* @__PURE__ */ new Set(["FRAME", "COMPONENT", "INSTANCE"]);

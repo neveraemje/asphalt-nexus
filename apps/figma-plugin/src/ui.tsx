@@ -1,14 +1,15 @@
 /* eslint-disable @next/next/no-img-element */
 
-import { WorkflowSquare08Icon } from "@hugeicons/core-free-icons"
+import { HierarchySquare01Icon, TextSquareIcon } from "@hugeicons/core-free-icons"
 import { HugeiconsIcon } from "@hugeicons/react"
-import { ArrowLeft, ArrowRight, ChevronDown, ListTree, LoaderCircle, PencilLine, Plus, Search, Trash2, X } from "lucide-react"
+import { ArrowLeft, ArrowRight, Check, ChevronDown, Copy, LoaderCircle, PencilLine, Plus, Search, Trash2, X } from "lucide-react"
 import { createRoot } from "react-dom/client"
-import { type RefObject, useEffect, useId, useMemo, useRef, useState } from "react"
+import { type ClipboardEvent as ReactClipboardEvent, type KeyboardEvent as ReactKeyboardEvent, type RefObject, useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 
 import { Button } from "./components/ui/button"
 import { Checkbox } from "./components/ui/checkbox"
 import { Input } from "./components/ui/input"
+import { Switch } from "./components/ui/switch"
 import { generateInformationArchitecture } from "./ia"
 import { cn } from "./lib/utils"
 
@@ -66,7 +67,7 @@ const apps: { label: string; value: AppSlug }[] = [
 ]
 
 const formLabelClassName = "text-sm leading-5 text-[var(--nexus-caption)]"
-const formPillValueClassName = "h-11 rounded-[32px] px-4 text-base font-medium"
+const formPillValueClassName = "h-10 rounded-[32px] px-4 text-[16] font-medium"
 const pendingButtonClassName = "border-transparent bg-[var(--nexus-preview)] text-[var(--nexus-caption)] hover:bg-[var(--nexus-preview)] disabled:opacity-100"
 const lazyLoadRootMargin = "320px 0px"
 
@@ -140,6 +141,28 @@ function LazyImage({
   )
 }
 
+// Colors the shared Figma SVG through CSS while preserving the source asset shape.
+function FigmaLogo({ className }: { className?: string }) {
+  const maskImage = 'url("__ASSET_FIGMA_LOGO__")'
+
+  return (
+    <span
+      aria-hidden="true"
+      className={cn("inline-block bg-current", className)}
+      style={{
+        WebkitMaskImage: maskImage,
+        WebkitMaskPosition: "center",
+        WebkitMaskRepeat: "no-repeat",
+        WebkitMaskSize: "contain",
+        maskImage,
+        maskPosition: "center",
+        maskRepeat: "no-repeat",
+        maskSize: "contain",
+      }}
+    />
+  )
+}
+
 // Keeps the next batch trigger visually quiet while communicating background work.
 function LazyLoadSentinel({ sentinelRef }: { sentinelRef: RefObject<HTMLDivElement | null> }) {
   return (
@@ -163,7 +186,9 @@ function post(message: PluginMessage) {
 function App() {
   const [activeApp, setActiveApp] = useState<AppSlug>("consumer")
   const [category, setCategory] = useState("All")
+  const [editingRecordId, setEditingRecordId] = useState<string | null>(null)
   const [featureId, setFeatureId] = useState("")
+  const [isLoadingRecords, setIsLoadingRecords] = useState(true)
   const [pushedRecords, setPushedRecords] = useState<ScreenRecord[]>([])
   const [pushReturnRoute, setPushReturnRoute] = useState<Exclude<Route, "push">>("browse")
   const [query, setQuery] = useState("")
@@ -182,6 +207,12 @@ function App() {
       if (message.type === "records-loaded") {
         console.log("[Asphalt Nexus UI] records-loaded", message.records.map(debugRecordUrl))
         setPushedRecords(message.records)
+        setIsLoadingRecords(false)
+      }
+
+      if (message.type === "records-load-failed") {
+        setPushedRecords([])
+        setIsLoadingRecords(false)
       }
 
       if (message.type === "record-upserted") {
@@ -192,6 +223,22 @@ function App() {
           if (existingIndex === -1) return [message.record, ...records]
           return records.map((record) => record.id === message.record.id ? message.record : record)
         })
+      }
+
+      if (message.type === "record-updated") {
+        console.log("[Asphalt Nexus UI] record-updated", debugRecordUrl(message.record))
+        const updatedScreen = recordToNexusScreen(message.record)
+
+        setPushedRecords((records) => records.map((record) => (
+          record.id === message.record.id ? message.record : record
+        )))
+        post({ height: 860, type: "resize", width: 800 })
+        setActiveApp(updatedScreen.app)
+        setCategory(updatedScreen.category)
+        setFeatureId(getFeatureCollectionId(updatedScreen))
+        setScreenId(updatedScreen.id)
+        setEditingRecordId(null)
+        setRoute("detail")
       }
 
       if (message.type === "records-upserted") {
@@ -237,7 +284,13 @@ function App() {
 
       if (message.type === "record-counts-updated") {
         setPushedRecords((records) => records.map((record) => (
-          record.id === message.record.id ? message.record : record
+          record.id === message.record.id
+            ? {
+              ...record,
+              pullCount: message.record.pullCount,
+              viewCount: message.record.viewCount,
+            }
+            : record
         )))
       }
 
@@ -275,7 +328,11 @@ function App() {
       const normalizedQuery = query.trim().toLowerCase()
       return featureCollections.filter((item) => {
         const screenNames = item.screens.map((screen) => screen.title).join(" ")
-        const haystack = `${getAppLabel(item.app)} ${item.featureName} ${item.team} ${screenNames}`.toLowerCase()
+        const hashtags = item.screens
+          .flatMap((screen) => screen.record?.tags || [])
+          .flatMap((tag) => [tag, `#${tag}`])
+          .join(" ")
+        const haystack = `${getAppLabel(item.app)} ${item.featureName} ${item.team} ${screenNames} ${hashtags}`.toLowerCase()
         if (normalizedQuery) return haystack.includes(normalizedQuery)
 
         const matchesCategory = activeCategory === "All" || item.team === activeCategory
@@ -284,6 +341,24 @@ function App() {
     },
     [activeApp, activeCategory, featureCollections, query]
   )
+  const searchScreens = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase()
+    if (!normalizedQuery) return []
+
+    return pushedScreens.filter((screen) => {
+      const tags = screen.record?.tags || []
+      const haystack = [
+        getAppLabel(screen.app),
+        screen.category,
+        screen.platform,
+        screen.title,
+        ...tags,
+        ...tags.map((tag) => `#${tag}`),
+      ].join(" ").toLowerCase()
+
+      return haystack.includes(normalizedQuery)
+    })
+  }, [pushedScreens, query])
   const feature = featureCollections.find((item) => item.id === featureId) || visibleFeatures[0]
   const screen = feature?.screens.find((item) => item.id === screenId) || feature?.screens[0]
   const screenIndex = feature && screen
@@ -376,6 +451,20 @@ function App() {
     post({ recordIds: [item.record.id], type: "delete-records" })
   }
 
+  // Opens the push form in edit mode with metadata from the stored screen record.
+  const editScreen = (item: GalleryItem) => {
+    if (!item.record) {
+      post({ message: "Edit only works for pushed screens.", type: "notify" })
+      return
+    }
+
+    setPushReturnRoute(route === "push" ? "detail" : route)
+    setEditingRecordId(item.record.id)
+    post({ type: "get-selection" })
+    post({ height: 957, type: "resize", width: 800 })
+    setRoute("push")
+  }
+
   // Deletes all checked screens from the current feature in one controller operation.
   const deleteSelectedScreens = () => {
     if (selectedScreenIds.length === 0 || pendingDeleteIds.length > 0) return
@@ -386,6 +475,7 @@ function App() {
   // Opens the dedicated bulk Push Design view and remembers where Back should return.
   const openPushDesign = () => {
     setPushReturnRoute(route === "push" ? "browse" : route)
+    setEditingRecordId(null)
     post({ type: "get-selection" })
     post({ height: 957, type: "resize", width: 800 })
     setRoute("push")
@@ -394,12 +484,18 @@ function App() {
   // Restores the gallery window size when leaving the full-screen push workflow.
   const closePushDesign = () => {
     post({ height: 860, type: "resize", width: 800 })
+    setEditingRecordId(null)
     setRoute(pushReturnRoute)
   }
 
   if (route === "push") {
+    const editingRecord = editingRecordId
+      ? pushedRecords.find((record) => record.id === editingRecordId)
+      : undefined
+
     return (
       <PushDesignScreen
+        editRecord={editingRecord}
         initialApp={getAppLabel(activeApp)}
         records={pushedRecords}
         selectedNodes={selectedNodes}
@@ -411,6 +507,14 @@ function App() {
   return (
     <main className="min-h-screen bg-[var(--nexus-background)] text-[var(--nexus-text)]">
       <PluginHeader
+        onHome={() => {
+          setQuery("")
+          setCategory("All")
+          setFeatureId("")
+          setScreenId("")
+          setSelectedScreenIds([])
+          setRoute("browse")
+        }}
         query={query}
         onPush={openPushDesign}
         onQueryChange={(value) => {
@@ -423,33 +527,51 @@ function App() {
 
       {route === "browse" ? (
         <>
-          <ProductTabs
-            activeApp={activeApp}
-            searching={Boolean(query.trim())}
-            onSelectApp={selectApp}
-          />
-          {!query.trim() ? (
-            <CategoryChips
-              activeCategory={activeCategory}
-              categories={availableCategories}
-              onSelectCategory={setCategory}
-            />
-          ) : null}
-          {visibleFeatures.length > 0 ? (
-            <BrowseResults
-              key={`${activeApp}:${activeCategory}:${query}`}
-              features={visibleFeatures}
-              onOpenFeature={(item) => {
-                setFeatureId(item.id)
-                setScreenId(item.screens[0]?.id || "")
-                setSelectedScreenIds([])
-                setRoute("gallery")
-              }}
-            />
-          ) : query.trim() ? (
-            <SearchEmptyState query={query} />
+          {isLoadingRecords ? (
+            <LoadingState />
           ) : (
-            <EmptyState appName={app.label} />
+            <>
+              <ProductTabs
+                activeApp={activeApp}
+                searching={Boolean(query.trim())}
+                onSelectApp={selectApp}
+              />
+              {!query.trim() ? (
+                <CategoryChips
+                  activeCategory={activeCategory}
+                  categories={availableCategories}
+                  onSelectCategory={setCategory}
+                />
+              ) : null}
+              {query.trim() ? (
+                searchScreens.length > 0 ? (
+                  <SearchResults
+                    screens={searchScreens}
+                    onGoToScreen={(item) => goToScreen(item)}
+                    onOpenDetail={(item) => {
+                      setFeatureId(getFeatureCollectionId(item.screen))
+                      setScreenId(item.screen.id)
+                      setRoute("detail")
+                    }}
+                  />
+                ) : (
+                  <SearchEmptyState query={query} />
+                )
+              ) : visibleFeatures.length > 0 ? (
+                <BrowseResults
+                  key={`${activeApp}:${activeCategory}:${query}`}
+                  features={visibleFeatures}
+                  onOpenFeature={(item) => {
+                    setFeatureId(item.id)
+                    setScreenId(item.screens[0]?.id || "")
+                    setSelectedScreenIds([])
+                    setRoute("gallery")
+                  }}
+                />
+              ) : (
+                <EmptyState appName={app.label} />
+              )}
+            </>
           )}
         </>
       ) : feature ? (
@@ -494,6 +616,7 @@ function App() {
           onNext={() => moveDetailCarousel(1)}
           onPrevious={() => moveDetailCarousel(-1)}
           onGoToScreen={() => goToScreen(detailItem)}
+          onEdit={() => editScreen(detailItem)}
         />
       ) : null}
     </main>
@@ -502,22 +625,29 @@ function App() {
 
 // Renders the fixed plugin header with branding, search, and the push-design action.
 function PluginHeader({
+  onHome,
   onPush,
   onQueryChange,
   query,
 }: {
+  onHome: () => void
   onPush: () => void
   onQueryChange: (value: string) => void
   query: string
 }) {
   return (
     <header className="sticky top-0 z-40 border-b border-[var(--nexus-border)] bg-white">
-      <div className="mx-auto grid h-auto w-full max-w-[850px] grid-cols-[1fr_auto] gap-4 px-6 py-5 min-[760px]:h-[96px] min-[760px]:grid-cols-[88px_minmax(180px,1fr)_auto] min-[760px]:items-center min-[760px]:gap-8 min-[760px]:py-6">
-        <div className="text-[20px] font-bold leading-5 text-black">
+      <div className="mx-auto grid h-auto w-full max-w-[850px] grid-cols-[1fr_auto] items-center gap-4 px-6 py-5 min-[760px]:h-[72px] min-[760px]:grid-cols-[88px_minmax(180px,1fr)_auto] min-[760px]:gap-8 min-[760px]:py-0">
+        <button
+          aria-label="Go to Asphalt Nexus home"
+          className="text-left text-[20px] font-bold leading-5 text-black outline-none transition-opacity hover:opacity-70 focus-visible:rounded focus-visible:ring-2 focus-visible:ring-[var(--nexus-green)]/20"
+          onClick={onHome}
+          type="button"
+        >
           Asphalt
           <br />
           Nexus
-        </div>
+        </button>
         <label className="relative col-span-2 min-[760px]:col-span-1">
           <Search
             aria-hidden="true"
@@ -525,8 +655,8 @@ function PluginHeader({
           />
           <Input
             aria-label="Search UI element"
-            className="h-11 pl-12"
-            placeholder="Search all UI elements"
+            className="h-11 pl-12 rounded-full"
+            placeholder="Search product, feature or UI elements"
             value={query}
             onChange={(event) => onQueryChange(event.currentTarget.value)}
           />
@@ -607,6 +737,30 @@ function CategoryChips({
   )
 }
 
+// Keeps the initial database request separate from the no-data state.
+function LoadingState() {
+  return (
+    <section
+      aria-label="Loading screens"
+      className="mx-auto grid min-h-[420px] w-full max-w-[850px] grid-cols-1 gap-x-4 gap-y-8 px-6 pb-14 pt-10 min-[760px]:grid-cols-2"
+      role="status"
+    >
+      {Array.from({ length: 6 }, (_, index) => (
+        <div aria-hidden="true" className="min-w-0" key={index}>
+          <div className="nexus-skeleton aspect-[2/3] w-full rounded-[32px]" />
+          <div className="mt-4 flex min-h-[50px] items-start gap-4">
+            <div className="min-w-0 flex-1 space-y-2">
+              <div className="nexus-skeleton h-3 w-1/3 rounded-full" />
+              <div className="nexus-skeleton h-4 w-3/4 rounded-full" />
+            </div>
+            <div className="nexus-skeleton h-5 w-14 rounded-full" />
+          </div>
+        </div>
+      ))}
+    </section>
+  )
+}
+
 // Shows a calm empty state when there are no pushed records for the active product.
 function EmptyState({ appName }: { appName: string }) {
   return (
@@ -665,6 +819,40 @@ function BrowseResults({
           key={item.id}
           feature={item}
           onOpen={() => onOpenFeature(item)}
+        />
+      ))}
+      {hasMore ? <LazyLoadSentinel sentinelRef={sentinelRef} /> : null}
+    </section>
+  )
+}
+
+// Renders individual screen cards for global search results instead of parent feature cards.
+function SearchResults({
+  onGoToScreen,
+  onOpenDetail,
+  screens,
+}: {
+  onGoToScreen: (item: GalleryItem) => void
+  onOpenDetail: (item: GalleryItem) => void
+  screens: NexusScreen[]
+}) {
+  const items = screens.map((screen) => getGalleryItem(screen))
+  const { hasMore, limit, sentinelRef } = useProgressiveLimit(items.length, 12)
+
+  return (
+    <section
+      aria-label="Screen search results"
+      className="mx-auto grid w-full max-w-[850px] grid-cols-2 gap-4 px-6 pb-14 pt-4 md:grid-cols-3 min-[840px]:grid-cols-4 min-[840px]:px-8"
+    >
+      {items.slice(0, limit).map((item) => (
+        <GalleryCard
+          key={item.id}
+          item={item}
+          onGoToScreen={() => onGoToScreen(item)}
+          onOpen={() => onOpenDetail(item)}
+          onToggleSelected={() => undefined}
+          selectable={false}
+          selected={false}
         />
       ))}
       {hasMore ? <LazyLoadSentinel sentinelRef={sentinelRef} /> : null}
@@ -814,12 +1002,14 @@ function GalleryCard({
   onGoToScreen,
   onOpen,
   onToggleSelected,
+  selectable = true,
   selected,
 }: {
   item: GalleryItem
   onGoToScreen: () => void
   onOpen: () => void
   onToggleSelected: () => void
+  selectable?: boolean
   selected: boolean
 }) {
   return (
@@ -829,15 +1019,17 @@ function GalleryCard({
         selected ? "border-[var(--nexus-green)] ring-2 ring-[var(--nexus-green)]/20" : "border-[var(--nexus-border-strong)]"
       )}
     >
-      <Checkbox
-        aria-label={`Select ${item.title}`}
-        checked={selected}
-        className={cn(
-          "absolute left-3 top-3 z-20 transition-opacity has-[:focus-visible]:opacity-100",
-          selected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
-        )}
-        onChange={onToggleSelected}
-      />
+      {selectable ? (
+        <Checkbox
+          aria-label={`Select ${item.title}`}
+          checked={selected}
+          className={cn(
+            "absolute left-3 top-3 z-20 transition-opacity has-[:focus-visible]:opacity-100",
+            selected ? "opacity-100" : "opacity-0 group-hover:opacity-100"
+          )}
+          onChange={onToggleSelected}
+        />
+      ) : null}
       <LazyImage
         alt={item.title}
         className="size-full object-cover object-top transition duration-200 group-hover:scale-[1.015]"
@@ -871,27 +1063,40 @@ function GalleryCard({
 
 // Renders the full-screen bulk form and derives one editable row per selected Figma frame.
 function PushDesignScreen({
+  editRecord,
   initialApp,
   onClose,
   records,
   selectedNodes,
 }: {
+  editRecord?: ScreenRecord
   initialApp: string
   onClose: () => void
   records: ScreenRecord[]
   selectedNodes: SelectionNodeSummary[]
 }) {
+  const isEditMode = Boolean(editRecord)
   const [expandedNodeId, setExpandedNodeId] = useState<string | null | undefined>(undefined)
   const [screenNames, setScreenNames] = useState<Record<string, string>>({})
-  const [selectedApp, setSelectedApp] = useState(initialApp)
-  const [selectedFeature, setSelectedFeature] = useState("")
-  const [selectedTeam, setSelectedTeam] = useState("")
+  const [selectedApp, setSelectedApp] = useState(
+    editRecord ? getAppLabel(appLabelToSlug(editRecord.app)) : initialApp
+  )
+  const [selectedFeature, setSelectedFeature] = useState(editRecord?.featureName || "")
+  const [selectedTeam, setSelectedTeam] = useState(editRecord?.team || "")
   const [sourceUrls, setSourceUrls] = useState<Record<string, string>>({})
+  const [screenTags, setScreenTags] = useState<Record<string, string[]>>({})
+  const [editScreenName, setEditScreenName] = useState(editRecord?.screenName || "")
+  const [editTags, setEditTags] = useState(editRecord?.tags || [])
+  const [replaceSource, setReplaceSource] = useState(false)
+  const [keepInformationArchitecture, setKeepInformationArchitecture] = useState(true)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   useEffect(() => {
     const onMessage = (event: MessageEvent<{ pluginMessage?: PluginToUiMessage }>) => {
-      if (event.data.pluginMessage?.type === "push-screens-failed") {
+      if (
+        event.data.pluginMessage?.type === "push-screens-failed"
+        || event.data.pluginMessage?.type === "record-update-failed"
+      ) {
         setIsSubmitting(false)
       }
     }
@@ -922,6 +1127,14 @@ function PushDesignScreen({
     ),
     [records, selectedApp, selectedTeam]
   )
+  const tagOptions = useMemo(
+    () => getUniqueOptions([
+      ...records.flatMap((record) => record.tags || []),
+      ...Object.values(screenTags).flat(),
+      ...editTags,
+    ]),
+    [editTags, records, screenTags]
+  )
   const activeExpandedNodeId = expandedNodeId === undefined
     ? selectedNodes[0]?.id
     : expandedNodeId && selectedNodes.some((node) => node.id === expandedNodeId)
@@ -933,10 +1146,21 @@ function PushDesignScreen({
     ...node,
     screenName: screenNames[node.id] ?? node.name,
     sourceUrl: sourceUrls[node.id] ?? node.url ?? "",
+    tags: screenTags[node.id] ?? [],
   }))
   const hasMissingUrl = screenDrafts.some((screen) => !screen.sourceUrl.trim())
   const hasMissingMetadata = !selectedApp || !selectedTeam.trim() || !selectedFeature.trim()
-  const canSubmit = screenDrafts.length > 0 && !hasMissingUrl && !hasMissingMetadata
+  const replacementNode = selectedNodes.length === 1 ? selectedNodes[0] : undefined
+  const replacementSourceUrl = replacementNode?.url || ""
+  const canEdit = Boolean(
+    editRecord
+    && editScreenName.trim()
+    && !hasMissingMetadata
+    && (!replaceSource || (replacementNode && replacementSourceUrl.trim()))
+  )
+  const canSubmit = isEditMode
+    ? canEdit
+    : screenDrafts.length > 0 && !hasMissingUrl && !hasMissingMetadata
 
   return (
     <form
@@ -947,6 +1171,26 @@ function PushDesignScreen({
         if (!canSubmit || isSubmitting) return
 
         setIsSubmitting(true)
+        if (editRecord) {
+          post({
+            app: selectedApp,
+            featureName: selectedFeature.trim(),
+            recordId: editRecord.id,
+            replacement: replaceSource && replacementNode
+              ? {
+                keepInformationArchitecture,
+                nodeId: replacementNode.id,
+                sourceUrl: replacementSourceUrl,
+              }
+              : undefined,
+            screenName: editScreenName.trim(),
+            tags: editTags,
+            team: selectedTeam.trim(),
+            type: "update-record",
+          })
+          return
+        }
+
         post({
           app: selectedApp,
           featureName: selectedFeature.trim(),
@@ -954,13 +1198,14 @@ function PushDesignScreen({
             nodeId: screen.id,
             screenName: screen.screenName.trim() || screen.name,
             sourceUrl: screen.sourceUrl.trim(),
+            tags: screen.tags,
           })),
           team: selectedTeam.trim(),
           type: "push-screens",
         })
       }}
     >
-      <header className="flex h-[104px] shrink-0 items-center gap-4 border-b border-[var(--nexus-border)] bg-white px-6">
+      <header className="flex h-[64px] shrink-0 items-center gap-4 border-b border-[var(--nexus-border)] bg-white px-6">
         <Button
           aria-label="Back"
           disabled={isSubmitting}
@@ -970,7 +1215,9 @@ function PushDesignScreen({
         >
           <ArrowLeft className="size-5" />
         </Button>
-        <h1 className="text-[22px] font-bold leading-9">Push your Design</h1>
+        <h1 className="truncate text-[16px] font-semibold leading-9">
+          {editRecord ? `Edit “${editRecord.screenName}”` : "Push your Design"}
+        </h1>
       </header>
 
       <div className="nexus-scrollbar min-h-0 flex-1 overflow-y-auto p-6">
@@ -980,11 +1227,7 @@ function PushDesignScreen({
               label="Select your app"
               options={appOptions}
               value={selectedApp}
-              onChange={(value) => {
-                setSelectedApp(value)
-                setSelectedTeam("")
-                setSelectedFeature("")
-              }}
+              onChange={setSelectedApp}
             />
 
             <AutocompleteField
@@ -992,10 +1235,7 @@ function PushDesignScreen({
               options={teamOptions}
               placeholder="Select or add a team"
               value={selectedTeam}
-              onChange={(value) => {
-                setSelectedTeam(value)
-                setSelectedFeature("")
-              }}
+              onChange={setSelectedTeam}
             />
 
             <AutocompleteField
@@ -1007,7 +1247,22 @@ function PushDesignScreen({
             />
 
             <div className="border-t border-dashed border-[var(--nexus-border)] pt-6">
-              {screenDrafts.length === 0 ? (
+              {editRecord ? (
+                <EditScreenFields
+                  currentSourceUrl={getScreenSourceUrl(editRecord) || ""}
+                  keepInformationArchitecture={keepInformationArchitecture}
+                  onKeepInformationArchitectureChange={setKeepInformationArchitecture}
+                  onReplaceSourceChange={setReplaceSource}
+                  onScreenNameChange={setEditScreenName}
+                  onTagsChange={setEditTags}
+                  replaceSource={replaceSource}
+                  replacementNode={replacementNode}
+                  screenName={editScreenName}
+                  selectionCount={selectedNodes.length}
+                  tagOptions={tagOptions}
+                  tags={editTags}
+                />
+              ) : screenDrafts.length === 0 ? (
                 <div className="flex h-24 items-center gap-3 rounded-[16px] border border-dashed border-[var(--nexus-border-strong)] bg-[var(--nexus-muted)] px-5 text-base text-[var(--nexus-inactive)]">
                   <Plus className="size-5" />
                   <span>Select frame / canvas</span>
@@ -1040,6 +1295,10 @@ function PushDesignScreen({
                             ),
                           }))
                         }}
+                        onTagsChange={(tags) => {
+                          setScreenTags((current) => ({ ...current, [screen.id]: tags }))
+                        }}
+                        tagOptions={tagOptions}
                         onToggle={() => {
                           setExpandedNodeId((current) => current === screen.id ? null : screen.id)
                         }}
@@ -1053,23 +1312,174 @@ function PushDesignScreen({
         </section>
       </div>
 
-      <footer className="flex min-h-[97px] shrink-0 items-center justify-end gap-4 border-t border-[var(--nexus-border)] bg-white px-8 py-6">
-        <Button className="w-40" disabled={isSubmitting} onClick={onClose} variant="secondary">
+      <footer className="flex h-[72px] shrink-0 items-center justify-end gap-4 border-t border-[var(--nexus-border)] bg-white px-8 py-6">
+        <Button disabled={isSubmitting} onClick={onClose} variant="secondary">
           Cancel
         </Button>
         <Button
-          aria-label={isSubmitting ? "Uploading screens" : undefined}
-          className={cn("w-40", isSubmitting && pendingButtonClassName)}
+          aria-label={isSubmitting
+            ? editRecord ? "Updating screen" : "Uploading screens"
+            : undefined}
+          className={cn(isSubmitting && pendingButtonClassName)}
           disabled={!canSubmit || isSubmitting}
           type="submit"
           variant="primary"
         >
           {isSubmitting ? (
             <LoaderCircle className="size-5 animate-spin" />
-          ) : "Submit"}
+          ) : editRecord ? "Update" : "Submit"}
         </Button>
       </footer>
     </form>
+  )
+}
+
+// Edits one saved screen while keeping source replacement explicitly optional.
+function EditScreenFields({
+  currentSourceUrl,
+  keepInformationArchitecture,
+  onKeepInformationArchitectureChange,
+  onReplaceSourceChange,
+  onScreenNameChange,
+  onTagsChange,
+  replaceSource,
+  replacementNode,
+  screenName,
+  selectionCount,
+  tagOptions,
+  tags,
+}: {
+  currentSourceUrl: string
+  keepInformationArchitecture: boolean
+  onKeepInformationArchitectureChange: (value: boolean) => void
+  onReplaceSourceChange: (value: boolean) => void
+  onScreenNameChange: (value: string) => void
+  onTagsChange: (tags: string[]) => void
+  replaceSource: boolean
+  replacementNode?: SelectionNodeSummary
+  screenName: string
+  selectionCount: number
+  tagOptions: string[]
+  tags: string[]
+}) {
+  const selectionMessage = selectionCount === 0
+    ? "Select one frame, component, or instance in Figma."
+    : selectionCount > 1
+      ? "Select only one screen to use as the new source."
+      : replacementNode?.name || "Selected screen"
+
+  return (
+    <div>
+      <div className="flex flex-col gap-4">
+        <label className="flex flex-col gap-2">
+          <span className={formLabelClassName}>Screen name</span>
+          <div className="relative">
+            <PencilLine
+              aria-hidden="true"
+              className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-[#bfbfbf]"
+            />
+            <Input
+              aria-label="Screen name"
+              className="h-10 rounded-[12px] bg-[var(--nexus-muted)] pl-11 pr-3 text-[13px] font-medium"
+              value={screenName}
+              onChange={(event) => onScreenNameChange(event.currentTarget.value)}
+            />
+          </div>
+        </label>
+
+        <label className="flex flex-col gap-2">
+          <span className={formLabelClassName}>Current Figma URL</span>
+          <div className="relative">
+            <FigmaLogo className="pointer-events-none absolute left-3 top-1/2 h-4 w-3 -translate-y-1/2 text-[var(--nexus-inactive)]" />
+            <Input
+              aria-label="Current Figma URL"
+              className="h-10 cursor-not-allowed rounded-[12px] bg-[#f3f3f3] pl-11 pr-3 text-[13px] text-[var(--nexus-inactive)] opacity-70"
+              disabled
+              value={currentSourceUrl}
+            />
+          </div>
+        </label>
+
+        <HashtagField
+          label={`Hashtags for ${screenName || "screen"}`}
+          onChange={onTagsChange}
+          options={tagOptions}
+          value={tags}
+        />
+
+        <ToggleField
+          checked={replaceSource}
+          description="Use one selected Figma screen as the new image and source URL."
+          label="Replace Figma source"
+          onCheckedChange={onReplaceSourceChange}
+        />
+
+        {replaceSource ? (
+          <div className="flex flex-col gap-4 rounded-[12px] border border-[var(--nexus-border)] bg-[var(--nexus-muted)] p-4">
+            <div>
+              <p className="text-sm font-medium text-[var(--nexus-text)]">Selected Figma screen</p>
+              <p className={cn(
+                "mt-1 text-xs leading-5",
+                replacementNode && selectionCount === 1
+                  ? "text-[var(--nexus-caption)]"
+                  : "text-[var(--nexus-error)]"
+              )}>
+                {selectionMessage}
+              </p>
+            </div>
+
+            {replacementNode && selectionCount === 1 ? (
+              <div className="relative">
+                <FigmaLogo className="pointer-events-none absolute left-3 top-1/2 h-4 w-3 -translate-y-1/2 text-[var(--nexus-caption)]" />
+                <Input
+                  aria-label="New Figma URL"
+                  className="h-10 rounded-[12px] bg-white pl-11 pr-3 text-[13px] text-[#265fd4]"
+                  readOnly
+                  value={replacementNode.url || ""}
+                />
+              </div>
+            ) : null}
+
+            <ToggleField
+              checked={keepInformationArchitecture}
+              description={keepInformationArchitecture
+                ? "Keep the IA already saved in the database."
+                : "Generate a new IA from the selected Figma screen."
+              }
+              label={keepInformationArchitecture ? "Keep existing IA" : "Generate new IA"}
+              onCheckedChange={onKeepInformationArchitectureChange}
+            />
+          </div>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
+// Shared binary control for edit-mode source and IA options.
+function ToggleField({
+  checked,
+  description,
+  label,
+  onCheckedChange,
+}: {
+  checked: boolean
+  description: string
+  label: string
+  onCheckedChange: (value: boolean) => void
+}) {
+  return (
+    <div className="flex items-center justify-between gap-4 rounded-[12px] border border-[var(--nexus-border)] bg-white p-4">
+      <div className="min-w-0">
+        <p className="text-sm font-medium leading-5 text-[var(--nexus-text)]">{label}</p>
+        <p className="mt-1 text-xs leading-5 text-[var(--nexus-caption)]">{description}</p>
+      </div>
+      <Switch
+        aria-label={label}
+        checked={checked}
+        onCheckedChange={onCheckedChange}
+      />
+    </div>
   )
 }
 
@@ -1079,16 +1489,48 @@ function BulkPushScreenRow({
   onRemove,
   onScreenNameChange,
   onSourceUrlChange,
+  onTagsChange,
   onToggle,
   screen,
+  tagOptions,
 }: {
   expanded: boolean
   onRemove: () => void
   onScreenNameChange: (value: string) => void
   onSourceUrlChange: (value: string) => void
   onToggle: () => void
-  screen: SelectionNodeSummary & { screenName: string; sourceUrl: string }
+  onTagsChange: (tags: string[]) => void
+  screen: SelectionNodeSummary & { screenName: string; sourceUrl: string; tags: string[] }
+  tagOptions: string[]
 }) {
+  const [isCopied, setIsCopied] = useState(false)
+
+  const copyTags = async () => {
+    if (screen.tags.length === 0) return
+
+    const copiedTags = screen.tags.map((tag) => `#${tag}`).join(" ")
+
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(copiedTags)
+      } else {
+        const textarea = document.createElement("textarea")
+        textarea.value = copiedTags
+        textarea.style.position = "fixed"
+        textarea.style.opacity = "0"
+        document.body.appendChild(textarea)
+        textarea.focus()
+        textarea.select()
+        document.execCommand("copy")
+        textarea.remove()
+      }
+      setIsCopied(true)
+      window.setTimeout(() => setIsCopied(false), 1600)
+    } catch {
+      setIsCopied(false)
+    }
+  }
+
   return (
     <article className="border-b border-dashed border-[var(--nexus-border)] py-4 first:pt-2">
       <div className="grid grid-cols-[24px_minmax(0,1fr)_40px] items-center gap-4">
@@ -1126,12 +1568,7 @@ function BulkPushScreenRow({
       {expanded ? (
         <div className="ml-10 mr-14 mt-2">
           <div className="relative">
-            <img
-              alt=""
-              aria-hidden="true"
-              className="pointer-events-none absolute left-3 top-1/2 h-4 w-auto -translate-y-1/2 object-contain"
-              src="__ASSET_FIGMA_LOGO__"
-            />
+            <FigmaLogo className="pointer-events-none absolute left-3 top-1/2 h-4 w-3 -translate-y-1/2 text-[var(--nexus-caption)]" />
             <Input
               aria-label={`Figma URL for ${screen.screenName}`}
               className={cn(
@@ -1143,6 +1580,27 @@ function BulkPushScreenRow({
               value={screen.sourceUrl}
               onChange={(event) => onSourceUrlChange(event.currentTarget.value)}
             />
+          </div>
+          <div className="flex items-start gap-2">
+            <div className="min-w-0 flex-1">
+              <HashtagField
+                label={`Hashtags for ${screen.screenName}`}
+                onChange={onTagsChange}
+                options={tagOptions}
+                value={screen.tags}
+              />
+            </div>
+            <Button
+              aria-label={`Copy hashtags for ${screen.screenName}`}
+              className="mt-2 shrink-0"
+              disabled={screen.tags.length === 0}
+              onClick={copyTags}
+              size="icon"
+              title="Copy hashtags"
+              variant="icon"
+            >
+              {isCopied ? <Check className="size-5" /> : <Copy className="size-5" />}
+            </Button>
           </div>
         </div>
       ) : null}
@@ -1174,7 +1632,7 @@ function ChipField({
             className={cn(
               formPillValueClassName,
               item === value &&
-              "h-11 border-[var(--nexus-green)] bg-[var(--nexus-green-soft)] font-medium text-[var(--nexus-green)] hover:bg-[var(--nexus-green-soft)]"
+              "h-10 border-[var(--nexus-green)] bg-[var(--nexus-green-soft)] font-medium text-[var(--nexus-green)] hover:bg-[var(--nexus-green-soft)]"
             )}
             onClick={() => onChange(item)}
             variant="secondary"
@@ -1330,6 +1788,198 @@ function AutocompleteField({
   )
 }
 
+// Renders removable hashtags with autocomplete suggestions from previously saved records.
+function HashtagField({
+  label,
+  onChange,
+  options,
+  value,
+}: {
+  label: string
+  onChange: (tags: string[]) => void
+  options: string[]
+  value: string[]
+}) {
+  const listboxId = useId()
+  const rootRef = useRef<HTMLDivElement>(null)
+  const [activeIndex, setActiveIndex] = useState(-1)
+  const [inputValue, setInputValue] = useState("")
+  const [open, setOpen] = useState(false)
+  const normalizedInput = normalizeHashtag(inputValue)
+  const selectedTags = new Set(value.map((tag) => tag.toLowerCase()))
+  const filteredOptions = options.filter((option) => (
+    !selectedTags.has(option.toLowerCase())
+    && (!normalizedInput || option.toLowerCase().includes(normalizedInput.toLowerCase()))
+  ))
+  const hasExactMatch = value.some((tag) => tag.toLowerCase() === normalizedInput.toLowerCase())
+  const selectableItems = normalizedInput && !hasExactMatch
+    ? [...filteredOptions, normalizedInput]
+    : filteredOptions
+  const resolvedActiveIndex = activeIndex >= 0 && activeIndex < selectableItems.length
+    ? activeIndex
+    : -1
+
+  useEffect(() => {
+    const closeWhenClickingOutside = (event: PointerEvent) => {
+      if (!rootRef.current?.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+
+    document.addEventListener("pointerdown", closeWhenClickingOutside)
+    return () => document.removeEventListener("pointerdown", closeWhenClickingOutside)
+  }, [])
+
+  const addTags = (rawTags: string[]) => {
+    const nextTags = [...value]
+    rawTags.map(normalizeHashtag).filter(Boolean).forEach((tag) => {
+      if (!nextTags.some((item) => item.toLowerCase() === tag.toLowerCase())) {
+        nextTags.push(tag)
+      }
+    })
+
+    if (nextTags.length !== value.length) {
+      onChange(nextTags)
+    }
+    setInputValue("")
+    setActiveIndex(-1)
+    setOpen(false)
+  }
+
+  const addTag = (rawTag: string) => addTags([rawTag])
+
+  const removeTag = (tagToRemove: string) => {
+    onChange(value.filter((tag) => tag !== tagToRemove))
+  }
+
+  return (
+    <label className="mt-2 flex flex-col gap-2">
+      <span className="sr-only">{label}</span>
+      <div className="relative" ref={rootRef}>
+        <div
+          className="flex min-h-10 w-full flex-wrap items-center gap-1.5 rounded-[12px] border border-[var(--nexus-border)] bg-[var(--nexus-muted)] px-2 py-1.5 transition focus-within:border-[var(--nexus-green)] focus-within:ring-2 focus-within:ring-[var(--nexus-green)]/10"
+          onClick={() => setOpen(true)}
+        >
+          {value.map((tag) => (
+            <span
+              className="inline-flex max-w-full items-center gap-1 rounded-full border border-[var(--nexus-border)] bg-white py-1 pl-2.5 pr-1 text-[12px] font-medium text-[var(--nexus-green)]"
+              key={tag}
+            >
+              <span className="truncate">#{tag}</span>
+              <button
+                aria-label={`Remove #${tag}`}
+                className="flex size-5 shrink-0 items-center justify-center rounded-full outline-none transition hover:bg-black/10 focus-visible:ring-2 focus-visible:ring-[var(--nexus-green)]/30"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  removeTag(tag)
+                }}
+                type="button"
+              >
+                <X className="size-3.5" />
+              </button>
+            </span>
+          ))}
+          <input
+            aria-activedescendant={resolvedActiveIndex >= 0 ? `${listboxId}-${resolvedActiveIndex}` : undefined}
+            aria-autocomplete="list"
+            aria-controls={listboxId}
+            aria-expanded={open}
+            aria-label={label}
+            className="h-7 min-w-[120px] flex-1 border-0 bg-transparent px-1 text-[13px] text-[var(--nexus-text)] outline-none placeholder:text-[var(--nexus-inactive)]"
+            placeholder={value.length > 0 ? "Add another hashtag" : "Add hashtags"}
+            role="combobox"
+            value={inputValue}
+            onChange={(event) => {
+              setActiveIndex(-1)
+              setInputValue(event.currentTarget.value)
+              setOpen(true)
+            }}
+            onFocus={() => setOpen(true)}
+            onPaste={(event) => {
+              const pastedTags = parseHashtags(event.clipboardData.getData("text"))
+              if (pastedTags.length === 0) return
+
+              event.preventDefault()
+              addTags(pastedTags)
+            }}
+            onKeyDown={(event) => {
+              if (event.key === "ArrowDown") {
+                event.preventDefault()
+                setOpen(true)
+                setActiveIndex((current) => Math.min(current + 1, selectableItems.length - 1))
+              }
+
+              if (event.key === "ArrowUp") {
+                event.preventDefault()
+                setOpen(true)
+                setActiveIndex((current) => Math.max(current - 1, 0))
+              }
+
+              if ((event.key === "Enter" || event.key === ",") && open) {
+                event.preventDefault()
+                addTag(resolvedActiveIndex >= 0
+                  ? selectableItems[resolvedActiveIndex]
+                  : inputValue)
+              }
+
+              if (event.key === "Backspace" && !inputValue && value.length > 0) {
+                removeTag(value[value.length - 1])
+              }
+
+              if (event.key === "Escape") {
+                setOpen(false)
+              }
+            }}
+          />
+        </div>
+
+        {open && selectableItems.length > 0 ? (
+          <div
+            className="nexus-scrollbar absolute bottom-[calc(100%+8px)] left-0 right-0 z-30 max-h-52 overflow-y-auto rounded-[12px] border border-[var(--nexus-border)] bg-white p-1.5 shadow-xl"
+            id={listboxId}
+            role="listbox"
+          >
+            {selectableItems.map((option, index) => {
+              const isNewOption = option === normalizedInput && !options.some(
+                (item) => item.toLowerCase() === normalizedInput.toLowerCase()
+              )
+
+              return (
+                <button
+                  aria-selected={resolvedActiveIndex === index}
+                  className={cn(
+                    "flex min-h-10 w-full items-center gap-2 rounded-[8px] px-3 text-left text-sm text-[var(--nexus-text)] outline-none transition hover:bg-[var(--nexus-muted)] focus:bg-[var(--nexus-muted)]",
+                    resolvedActiveIndex === index && "bg-[var(--nexus-muted)]"
+                  )}
+                  id={`${listboxId}-${index}`}
+                  key={`${option}-${index}`}
+                  onClick={() => addTag(option)}
+                  onMouseEnter={() => setActiveIndex(index)}
+                  role="option"
+                  type="button"
+                >
+                  {isNewOption ? <Plus className="size-4 text-[var(--nexus-green)]" /> : null}
+                  <span className="truncate">
+                    {isNewOption ? `Add #${option}` : `#${option}`}
+                  </span>
+                </button>
+              )
+            })}
+          </div>
+        ) : null}
+      </div>
+    </label>
+  )
+}
+
+function normalizeHashtag(value: string) {
+  return value.replace(/^#+/, "").trim().replace(/\s+/g, "-")
+}
+
+function parseHashtags(value: string) {
+  return value.split(/[\s,]+/).map(normalizeHashtag).filter(Boolean)
+}
+
 // Normalizes stored metadata into a sorted list of unique autocomplete options.
 function getUniqueOptions(values: string[]) {
   return Array.from(
@@ -1343,6 +1993,7 @@ function DetailDialog({
   item,
   onClose,
   onDelete,
+  onEdit,
   onNext,
   onPrevious,
   onGoToScreen,
@@ -1351,6 +2002,7 @@ function DetailDialog({
   item: GalleryItem
   onClose: () => void
   onDelete: () => void
+  onEdit: () => void
   onNext: () => void
   onPrevious: () => void
   onGoToScreen: () => void
@@ -1376,132 +2028,168 @@ function DetailDialog({
   return (
     <>
       <div className="fixed inset-0 z-40 bg-white">
-      <div className="relative mx-auto flex h-screen w-full max-w-[800px] flex-col overflow-hidden bg-white">
-        <Button
-          aria-label="Previous screen"
-          className="absolute left-4 top-[42%] z-30 bg-[var(--nexus-preview)] text-[var(--nexus-caption)] hover:bg-[#dadada]"
-          onClick={onPrevious}
-          size="icon"
-          variant="icon"
-        >
-          <ArrowLeft className="size-5" />
-        </Button>
-        <Button
-          aria-label="Next screen"
-          className="absolute right-4 top-[42%] z-30 bg-[var(--nexus-preview)] text-[var(--nexus-caption)] hover:bg-[#dadada]"
-          onClick={onNext}
-          size="icon"
-          variant="icon"
-        >
-          <ArrowRight className="size-5" />
-        </Button>
+        <div className="relative mx-auto flex h-screen w-full max-w-[800px] flex-col overflow-hidden bg-white">
+          <Button
+            aria-label="Previous screen"
+            className="absolute left-4 top-[42%] z-30 bg-[var(--nexus-preview)] text-[var(--nexus-caption)] hover:bg-[#dadada]"
+            onClick={onPrevious}
+            size="icon"
+            variant="icon"
+          >
+            <ArrowLeft className="size-5" />
+          </Button>
+          <Button
+            aria-label="Next screen"
+            className="absolute right-4 top-[42%] z-30 bg-[var(--nexus-preview)] text-[var(--nexus-caption)] hover:bg-[#dadada]"
+            onClick={onNext}
+            size="icon"
+            variant="icon"
+          >
+            <ArrowRight className="size-5" />
+          </Button>
 
-        <section
-          aria-labelledby="screen-detail-title"
-          aria-modal="true"
-          className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white"
-          role="dialog"
-        >
-          <div className="flex h-[72px] shrink-0 items-center justify-between border-b border-[var(--nexus-border)] bg-[var(--nexus-muted)] pl-5 pr-3 sm:pl-8 sm:pr-4">
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#a6e8ff] text-base font-medium text-[var(--nexus-text)]">
-                {getNameInitial(authorName)}
+          <section
+            aria-labelledby="screen-detail-title"
+            aria-modal="true"
+            className="flex min-h-0 flex-1 flex-col overflow-hidden bg-white"
+            role="dialog"
+          >
+            <div className="flex h-[72px] shrink-0 items-center justify-between border-b border-[var(--nexus-border)] bg-[var(--nexus-muted)] pl-5 pr-3 sm:pl-8 sm:pr-4">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-[#a6e8ff] text-base font-medium text-[var(--nexus-text)]">
+                  {getNameInitial(authorName)}
+                </div>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium leading-6 text-[var(--nexus-text)]">
+                    {authorName}
+                  </p>
+                  <p className="truncate text-xs leading-4 text-[var(--nexus-caption)]">
+                    Last Update : {updatedAt}
+                  </p>
+                </div>
               </div>
-              <div className="min-w-0">
-                <p className="truncate text-base font-medium leading-6 text-[var(--nexus-text)]">
-                  {authorName}
-                </p>
-                <p className="truncate text-xs leading-4 text-[var(--nexus-caption)]">
-                  Last Update : {updatedAt}
-                </p>
+
+              <div className="flex items-center gap-3">
+                <dl className="mr-6 hidden grid-cols-[72px_72px_72px] gap-2 text-right min-[640px]:grid">
+                  {detailStats.map(([label, value]) => (
+                    <div key={label} className="w-[72px]">
+                      <dt className="text-xs leading-3 text-[var(--nexus-caption)]">
+                        {label}
+                      </dt>
+                      <dd className="mt-0.5 text-sm font-medium leading-4 text-[var(--nexus-text)] tabular-nums">
+                        {value}
+                      </dd>
+                    </div>
+                  ))}
+                </dl>
+                <Button aria-label="Close detail" onClick={onClose} size="icon" variant="icon">
+                  <X className="size-5" />
+                </Button>
               </div>
             </div>
 
-            <div className="flex items-center gap-3">
-              <dl className="mr-6 hidden grid-cols-[72px_72px_72px] gap-2 text-right min-[640px]:grid">
-                {detailStats.map(([label, value]) => (
-                  <div key={label} className="w-[72px]">
-                    <dt className="text-xs leading-3 text-[var(--nexus-caption)]">
-                      {label}
-                    </dt>
-                    <dd className="mt-0.5 text-sm font-medium leading-4 text-[var(--nexus-text)] tabular-nums">
-                      {value}
-                    </dd>
-                  </div>
-                ))}
-              </dl>
-              <Button aria-label="Close detail" onClick={onClose} size="icon" variant="icon">
-                <X className="size-5" />
+            <div className="nexus-scrollbar flex min-h-0 flex-1 justify-center overflow-y-auto bg-white px-12 py-8">
+              <div className="h-max w-[min(393px,calc(100vw-96px))] shrink-0 overflow-hidden rounded-[32px] border border-[#bfbfbf] bg-white">
+                <img
+                  alt={item.title}
+                  className="block h-auto w-full"
+                  decoding="async"
+                  loading="eager"
+                  src={item.detailImage}
+                />
+              </div>
+            </div>
+          </section>
+
+          <section className="relative shrink-0 border-t border-[var(--nexus-border)] bg-white p-5 shadow-[0_-12px_28px_rgba(0,0,0,0.08)] sm:flex sm:items-start sm:justify-between sm:gap-6 sm:p-6">
+            <div className="absolute bottom-full right-4 z-30 mb-3 flex flex-col gap-3">
+              <Button
+                aria-label="Open screen in Figma"
+                className="bg-[var(--nexus-preview)] bg-neutral-900 text-[var(--nexus-caption)] hover:bg-neutral-700"
+                onClick={onGoToScreen}
+                size="icon"
+                title="Open screen in Figma"
+                variant="icon"
+              >
+                <FigmaLogo className="h-5 w-5 text-white" />
+              </Button>
+              <Button
+                aria-label="Edit screen"
+                className="bg-[var(--nexus-preview)] text-[var(--nexus-caption)] hover:bg-[#dadada]"
+                disabled={isDeleting}
+                onClick={onEdit}
+                size="icon"
+                title="Edit screen"
+                variant="icon"
+              >
+                <PencilLine className="size-5" />
+              </Button>
+              <Button
+                aria-label={isDeleting ? "Deleting screen" : "Delete screen"}
+                className={cn(
+                  "bg-[var(--nexus-preview)] text-[var(--nexus-error)] hover:bg-[#fff5f7]",
+                  isDeleting && pendingButtonClassName
+                )}
+                disabled={isDeleting}
+                onClick={onDelete}
+                size="icon"
+                title="Delete screen"
+                variant="icon"
+              >
+                {isDeleting ? (
+                  <LoaderCircle className="size-5 animate-spin" />
+                ) : (
+                  <Trash2 className="size-5" />
+                )}
               </Button>
             </div>
-          </div>
-
-          <div className="nexus-scrollbar flex min-h-0 flex-1 justify-center overflow-y-auto bg-white px-12 py-8">
-            <div className="h-max w-[min(393px,calc(100vw-96px))] shrink-0 overflow-hidden rounded-[32px] border border-[#bfbfbf] bg-white">
-              <img
-                alt={item.title}
-                className="block h-auto w-full"
-                decoding="async"
-                loading="eager"
-                src={item.detailImage}
-              />
+            <div className="min-w-0 flex-1">
+              <div className="flex flex-wrap items-center gap-1 text-xs leading-5">
+                <span className="font-light text-[var(--nexus-inactive)]">
+                  {getAppLabel(item.screen.app)}
+                </span>
+                <span className=" font-light text-[var(--nexus-inactive)]">/</span>
+                <span className="font-light text-[var(--nexus-inactive)]">
+                  {item.screen.category}
+                </span>
+                <span className="font-light text-[var(--nexus-inactive)]">/</span>
+                <span className="font-light text-[var(--nexus-inactive)]">
+                  {item.screen.platform}
+                </span>
+              </div>
+              <h2
+                className="mt-2 max-w-[395px] text-[16px] font-semibold leading-6 text-[var(--nexus-text)]"
+                id="screen-detail-title"
+              >
+                {item.title}
+              </h2>
+              {item.record?.tags?.length ? (
+                <div aria-label="Screen hashtags" className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
+                  {item.record.tags.map((tag) => (
+                    <span
+                      className="text-xs font-light text-[var(--nexus-inactive)]"
+                      key={tag}
+                    >
+                      #{tag}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
             </div>
-          </div>
-        </section>
 
-        <section className="shrink-0 border-t border-[var(--nexus-border)] bg-white p-5 shadow-[0_-12px_28px_rgba(0,0,0,0.08)] sm:flex sm:items-start sm:justify-between sm:gap-6 sm:p-6">
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-wrap items-center gap-1 text-sm leading-5">
-              <span className="font-light text-[var(--nexus-inactive)]">
-                {getAppLabel(item.screen.app)}
-              </span>
-              <span className=" font-light text-[var(--nexus-inactive)]">/</span>
-              <span className="font-light text-[var(--nexus-inactive)]">
-                {item.screen.category}
-              </span>
-              <span className="font-light text-[var(--nexus-inactive)]">/</span>
-              <span className="font-light text-[var(--nexus-inactive)]">
-                {item.screen.platform}
-              </span>
+            <div className="mt-5 shrink-0 sm:mt-0">
+              <Button
+                aria-label="Show information architecture"
+                className="gap-2 px-3"
+                disabled={!informationArchitecture}
+                onClick={() => setShowInformationArchitecture(true)}
+                variant="secondary"
+              >
+                {/* <ListTree className="size-4" /> */}
+                Show IA
+              </Button>
             </div>
-            <h2
-              className="mt-2 max-w-[395px] text-[18px] font-medium leading-6 text-[var(--nexus-text)]"
-              id="screen-detail-title"
-            >
-              {item.title}
-            </h2>
-          </div>
-
-          <div className="mt-5 grid shrink-0 grid-cols-[40px_minmax(96px,1fr)_minmax(120px,1fr)] gap-3 sm:mt-0 sm:grid-cols-[40px_104px_120px]">
-            <Button
-              aria-label={isDeleting ? "Deleting screen" : "Delete screen"}
-              className={cn(isDeleting && pendingButtonClassName)}
-              disabled={isDeleting}
-              onClick={onDelete}
-              size="icon-lg"
-              variant="danger"
-            >
-              {isDeleting ? (
-                <LoaderCircle className="size-5 animate-spin" />
-              ) : (
-                <Trash2 className="size-5" />
-              )}
-            </Button>
-            <Button
-              aria-label="Show information architecture"
-              className="gap-2 px-3"
-              disabled={!informationArchitecture}
-              onClick={() => setShowInformationArchitecture(true)}
-              variant="secondary"
-            >
-              <ListTree className="size-4" />
-              Show IA
-            </Button>
-            <Button className="w-full" onClick={onGoToScreen} variant="secondary">
-              Open screen
-            </Button>
-          </div>
-        </section>
+          </section>
         </div>
       </div>
 
@@ -1530,6 +2218,7 @@ function InformationArchitectureDialog({
   screenName: string
 }) {
   const [draftInformationArchitecture, setDraftInformationArchitecture] = useState(informationArchitecture)
+  const [activeView, setActiveView] = useState<"tree" | "text">("tree")
   const [savedSignature, setSavedSignature] = useState(() => (
     getInformationArchitectureEditSignature(informationArchitecture)
   ))
@@ -1580,16 +2269,64 @@ function InformationArchitectureDialog({
 
   // Recalculates IA counts and sequence numbers after one tree edit.
   const updateRegions = (regions: InformationArchitectureNode[]) => {
-    setDraftInformationArchitecture((current) => rebuildEditableInformationArchitecture(current, regions))
+    setDraftInformationArchitecture((current) => {
+      const next = rebuildEditableInformationArchitecture(current, regions)
+      return {
+        ...next,
+        freeformText: informationArchitectureToBulletList(next.regions),
+      }
+    })
+  }
+
+  const updateFreeformText = (value: string) => {
+    const parsedText = normalizeInformationArchitectureBulletList(value)
+    setDraftInformationArchitecture((current) => {
+      const next = rebuildEditableInformationArchitecture(
+        { ...current, freeformText: value },
+        parseInformationArchitectureBulletList(parsedText)
+      )
+      return { ...next, freeformText: value }
+    })
+  }
+
+  const changeView = (nextView: "tree" | "text") => {
+    if (nextView === "tree") {
+      const currentText = draftInformationArchitecture.freeformText
+        ?? informationArchitectureToBulletList(draftInformationArchitecture.regions)
+      const normalizedText = normalizeInformationArchitectureBulletList(currentText)
+      if (currentText !== normalizedText) {
+        setDraftInformationArchitecture((current) => {
+          const next = rebuildEditableInformationArchitecture(
+            { ...current, freeformText: normalizedText },
+            parseInformationArchitectureBulletList(normalizedText)
+          )
+          return { ...next, freeformText: normalizedText }
+        })
+      }
+    }
+    setActiveView(nextView)
   }
 
   // Saves the complete edited tree back onto the current screen record.
   const saveInformationArchitecture = () => {
     if (!recordId || !isDirty || isSaving) return
+    const normalizedText = draftInformationArchitecture.freeformText === undefined
+      ? undefined
+      : normalizeInformationArchitectureBulletList(draftInformationArchitecture.freeformText)
+    const nextInformationArchitecture = normalizedText === undefined
+      ? draftInformationArchitecture
+      : {
+        ...rebuildEditableInformationArchitecture(
+          { ...draftInformationArchitecture, freeformText: normalizedText },
+          parseInformationArchitectureBulletList(normalizedText)
+        ),
+        freeformText: normalizedText,
+      }
     setIsSaving(true)
-    setPendingSignature(draftSignature)
+    setDraftInformationArchitecture(nextInformationArchitecture)
+    setPendingSignature(getInformationArchitectureEditSignature(nextInformationArchitecture))
     post({
-      informationArchitecture: draftInformationArchitecture,
+      informationArchitecture: nextInformationArchitecture,
       recordId,
       type: "update-information-architecture",
     })
@@ -1607,11 +2344,11 @@ function InformationArchitectureDialog({
         onMouseDown={(event) => event.stopPropagation()}
         role="dialog"
       >
-        <header className="flex h-[89px] shrink-0 items-center justify-between gap-4 border-b border-[var(--nexus-border)] px-8 py-4">
+        <header className="flex h-[72px] shrink-0 items-center justify-between gap-4 border-b border-[var(--nexus-border)] px-8">
           <div className="min-w-0">
-            <p className="text-base leading-5 text-[var(--nexus-caption)]">Information Architecture</p>
+            <p className="text-sm leading-5 text-[var(--nexus-caption)]">Information Architecture</p>
             <h2
-              className="truncate text-[22px] font-semibold leading-9"
+              className="truncate text-[16px] font-semibold leading-9"
               id="information-architecture-title"
             >
               {screenName}
@@ -1627,25 +2364,62 @@ function InformationArchitectureDialog({
           </Button>
         </header>
 
-        <div className={cn(
-          "nexus-scrollbar min-h-0 flex-1 overflow-auto bg-white px-8 pb-8 pt-[53px]",
-          isSaving && "pointer-events-none"
-        )}>
-          <InformationArchitectureGraph
-            informationArchitecture={draftInformationArchitecture}
-            onChange={updateRegions}
-            screenName={screenName}
-          />
+        <div className="relative z-20 h-0">
+          <div
+            aria-label="Information architecture view"
+            className="pointer-events-auto absolute left-1/2 top-3 flex -translate-x-1/2 items-center gap-1 rounded-full border border-[var(--nexus-border)] bg-white p-1 shadow-lg"
+            role="tablist"
+          >
+            {[
+              { icon: HierarchySquare01Icon, label: "Tree", value: "tree" },
+              { icon: TextSquareIcon, label: "Text", value: "text" },
+            ].map(({ icon, label, value }) => (
+              <button
+                aria-selected={activeView === value}
+                className={cn(
+                  "flex h-8 items-center gap-2 rounded-full px-4 text-sm font-medium transition",
+                  activeView === value
+                    ? "bg-[var(--nexus-green-soft)] text-[var(--nexus-green)]"
+                    : "text-[var(--nexus-caption)] hover:bg-[var(--nexus-muted)]"
+                )}
+                key={value}
+                onClick={() => changeView(value as "tree" | "text")}
+                role="tab"
+                type="button"
+              >
+                <HugeiconsIcon aria-hidden="true" icon={icon} size={16} strokeWidth={1.8} />
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
 
-        <footer className="flex h-[97px] shrink-0 items-center justify-between gap-4 border-t border-[var(--nexus-border)] pl-[60px] pr-8 text-base">
+        <div className={cn(
+          "nexus-scrollbar min-h-0 flex-1 overflow-auto bg-white px-8 pb-8 pt-20",
+          isSaving && "pointer-events-none"
+        )}>
+          {activeView === "tree" ? (
+            <InformationArchitectureGraph
+              informationArchitecture={draftInformationArchitecture}
+              onChange={updateRegions}
+              screenName={screenName}
+            />
+          ) : (
+            <InformationArchitectureTextEditor
+              informationArchitecture={draftInformationArchitecture}
+              onChange={updateFreeformText}
+            />
+          )}
+        </div>
+
+        <footer className="flex h-[64px] shrink-0 items-center justify-between gap-4 border-t border-[var(--nexus-border)] pl-[60px] pr-8 text-sm">
           <span className="text-[var(--nexus-text)]">
             <span className="text-[var(--nexus-inactive)]">Update</span>{" "}
             {formatDisplayDate(draftInformationArchitecture.generatedAt)}
           </span>
           <Button
             aria-label={isSaving ? "Saving information architecture" : undefined}
-            className={cn("w-40", isSaving && pendingButtonClassName)}
+            className={cn(isSaving && pendingButtonClassName)}
             disabled={!recordId || !isDirty || isSaving}
             onClick={saveInformationArchitecture}
             variant="primary"
@@ -1664,7 +2438,277 @@ function InformationArchitectureDialog({
 function getInformationArchitectureEditSignature(
   informationArchitecture: ScreenInformationArchitecture
 ) {
-  return JSON.stringify(informationArchitecture.regions)
+  return JSON.stringify({
+    freeformText: informationArchitecture.freeformText
+      ?? informationArchitectureToBulletList(informationArchitecture.regions),
+    regions: informationArchitecture.regions,
+  })
+}
+
+// Converts the editable IA tree into the indented bullet-list starting point for text mode.
+function informationArchitectureToBulletList(regions: InformationArchitectureNode[]) {
+  const lines: string[] = []
+  const bulletMarkers = ["•", "◦", "▪", "•"]
+
+  const visit = (nodes: InformationArchitectureNode[], depth: number) => {
+    nodes.forEach((node) => {
+      lines.push(`${"  ".repeat(depth)}${bulletMarkers[depth]} ${node.label}`)
+      visit(node.children, depth + 1)
+    })
+  }
+
+  visit(regions, 0)
+  return lines.join("\n")
+}
+
+// Normalizes free-form input into the fixed two-space, four-level bullet format.
+function normalizeInformationArchitectureBulletList(value: string) {
+  return value.split(/\r?\n/).flatMap((line) => {
+    const trimmedLine = line.trim()
+    if (!trimmedLine) return []
+
+    const label = trimmedLine.replace(/^[-*•◦▪]\s*/, "").trim()
+    if (!label) return []
+
+    const indentation = line.match(/^\s*/)?.[0].replace(/\t/g, "  ").length || 0
+    const depth = Math.min(Math.floor(indentation / 2), 3)
+    const bulletMarkers = ["•", "◦", "▪", "•"]
+    return [`${"  ".repeat(depth)}${bulletMarkers[depth]} ${label}`]
+  }).join("\n")
+}
+
+// Parses an indented bullet list into the same four-level IA tree used by tree mode.
+function parseInformationArchitectureBulletList(value: string) {
+  const regions: InformationArchitectureNode[] = []
+  const stack: Array<{ depth: number; node: InformationArchitectureNode }> = []
+
+  value.split("\n").forEach((line) => {
+    const match = line.match(/^(\s*)[-*•◦▪]\s+(.+?)\s*$/)
+    if (!match) return
+
+    const depth = Math.min(Math.floor(match[1].replace(/\t/g, "  ").length / 2), 3)
+    const node = createEditableInformationArchitectureNode(depth + 1)
+    node.label = match[2]
+    node.sourceName = match[2]
+
+    while (stack.length > 0 && stack[stack.length - 1].depth >= depth) {
+      stack.pop()
+    }
+
+    const parent = stack[stack.length - 1]?.node
+    if (parent) {
+      parent.children.push(node)
+    } else {
+      regions.push(node)
+    }
+    stack.push({ depth, node })
+  })
+
+  return normalizeEditableInformationArchitectureNodes(regions)
+}
+
+function getInformationArchitectureBulletDepth(line: string) {
+  const indentation = line.match(/^\s*/)?.[0].replace(/\t/g, "  ").length || 0
+  return Math.min(Math.floor(indentation / 2), 3)
+}
+
+function getInformationArchitectureBulletLabel(line: string) {
+  return line.trim().replace(/^[-*•◦▪]\s*/, "").trim()
+}
+
+function getInformationArchitectureBulletMarker(depth: number) {
+  return ["•", "◦", "▪", "•"][Math.min(depth, 3)]
+}
+
+function getInformationArchitectureBulletWeight(depth: number) {
+  return depth === 0 ? "700" : depth === 1 ? "500" : "400"
+}
+
+function getInformationArchitectureBulletPrefix(depth: number) {
+  const normalizedDepth = Math.min(Math.max(depth, 0), 3)
+  return `${"  ".repeat(normalizedDepth)}${getInformationArchitectureBulletMarker(normalizedDepth)} `
+}
+
+// Renders one directly editable Markdown-like document with normalized bullets.
+function InformationArchitectureTextEditor({
+  informationArchitecture,
+  onChange,
+}: {
+  informationArchitecture: ScreenInformationArchitecture
+  onChange: (value: string) => void
+}) {
+  const editorRef = useRef<HTMLDivElement>(null)
+  const value = informationArchitecture.freeformText
+    ?? informationArchitectureToBulletList(informationArchitecture.regions)
+  const renderEditor = useCallback((nextValue: string) => {
+    const editor = editorRef.current
+    if (!editor) return
+
+    editor.replaceChildren()
+    const lines = nextValue ? nextValue.split("\n") : [""]
+
+    lines.forEach((line) => {
+      const depth = getInformationArchitectureBulletDepth(line)
+      const lineElement = document.createElement("div")
+      const label = getInformationArchitectureBulletLabel(line)
+
+      lineElement.dataset.iaLine = "true"
+      lineElement.dataset.depth = String(depth)
+      lineElement.style.paddingLeft = `${depth * 32}px`
+      lineElement.style.fontWeight = getInformationArchitectureBulletWeight(depth)
+      lineElement.style.lineHeight = "32px"
+      lineElement.style.minHeight = "32px"
+      lineElement.style.whiteSpace = "pre-wrap"
+      lineElement.textContent = `${getInformationArchitectureBulletMarker(depth)} ${label}`
+      editor.append(lineElement)
+    })
+  }, [])
+
+  const readEditor = useCallback(() => {
+    const editor = editorRef.current
+    if (!editor) return value
+
+    return Array.from(editor.children)
+      .filter((child): child is HTMLElement => (
+        child instanceof HTMLElement && child.dataset.iaLine === "true"
+      ))
+      .map((line) => {
+        const depth = Math.min(Number(line.dataset.depth) || 0, 3)
+        return `${"  ".repeat(depth)}${getInformationArchitectureBulletPrefix(depth).trim()} ${getInformationArchitectureBulletLabel(line.textContent || "")}`
+      })
+      .join("\n")
+  }, [value])
+
+  useEffect(() => {
+    const editor = editorRef.current
+    if (!editor) return
+
+    const currentValue = readEditor()
+    if (currentValue !== value && normalizeInformationArchitectureBulletList(currentValue) !== value) {
+      renderEditor(value)
+    }
+    if (editor.children.length === 0) renderEditor(value)
+  }, [readEditor, renderEditor, value])
+
+  const getSelectedLine = () => {
+    const editor = editorRef.current
+    const selection = window.getSelection()
+    if (!editor || !selection?.anchorNode) return null
+
+    let node: Node | null = selection.anchorNode
+    while (node && node !== editor) {
+      if (node instanceof HTMLElement && node.dataset.iaLine === "true") return node
+      node = node.parentNode
+    }
+    return null
+  }
+
+  const getSelectionOffset = (line: HTMLElement, node: Node, offset: number) => {
+    const range = document.createRange()
+    range.selectNodeContents(line)
+    range.setEnd(node, offset)
+    return range.toString().length
+  }
+
+  const setCaret = (line: HTMLElement, offset: number) => {
+    const selection = window.getSelection()
+    if (!selection) return
+
+    const textNode = line.firstChild || line.appendChild(document.createTextNode(""))
+    const range = document.createRange()
+    range.setStart(textNode, Math.min(offset, textNode.textContent?.length || 0))
+    range.collapse(true)
+    selection.removeAllRanges()
+    selection.addRange(range)
+  }
+
+  const emitEditorChange = () => onChange(readEditor())
+
+  const handleKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (event.key !== "Enter" && event.key !== "Tab") return
+
+    const editor = editorRef.current
+    const selection = window.getSelection()
+    const line = getSelectedLine()
+    if (!editor || !selection?.rangeCount || !line) return
+
+    event.preventDefault()
+    const range = selection.getRangeAt(0)
+    const lineText = line.textContent || ""
+    const label = getInformationArchitectureBulletLabel(lineText)
+    const labelStart = Math.max(lineText.length - label.length, 0)
+    const startOffset = Math.max(0, getSelectionOffset(line, range.startContainer, range.startOffset) - labelStart)
+    const endOffset = Math.max(0, getSelectionOffset(line, range.endContainer, range.endOffset) - labelStart)
+    const currentDepth = Math.min(Number(line.dataset.depth) || 0, 3)
+
+    if (event.key === "Tab") {
+      const nextDepth = Math.min(Math.max(currentDepth + (event.shiftKey ? -1 : 1), 0), 3)
+      const nextPrefix = getInformationArchitectureBulletPrefix(nextDepth)
+      line.dataset.depth = String(nextDepth)
+      line.style.paddingLeft = `${nextDepth * 32}px`
+      line.style.fontWeight = getInformationArchitectureBulletWeight(nextDepth)
+      line.textContent = `${nextPrefix}${label}`
+      setCaret(line, nextPrefix.length + Math.min(startOffset, label.length))
+      emitEditorChange()
+      return
+    }
+
+    const splitAt = Math.min(startOffset, label.length)
+    const deleteTo = Math.min(Math.max(endOffset, splitAt), label.length)
+    const before = label.slice(0, splitAt)
+    const after = label.slice(deleteTo)
+    const currentPrefix = getInformationArchitectureBulletPrefix(currentDepth)
+    const nextLine = document.createElement("div")
+    nextLine.dataset.iaLine = "true"
+    nextLine.dataset.depth = String(currentDepth)
+    nextLine.style.paddingLeft = `${currentDepth * 32}px`
+    nextLine.style.fontWeight = getInformationArchitectureBulletWeight(currentDepth)
+    nextLine.style.lineHeight = "32px"
+    nextLine.style.minHeight = "32px"
+    nextLine.style.whiteSpace = "pre-wrap"
+    nextLine.textContent = `${currentPrefix}${after}`
+    line.textContent = `${currentPrefix}${before}`
+    line.after(nextLine)
+    setCaret(nextLine, currentPrefix.length)
+    emitEditorChange()
+  }
+
+  const handlePaste = (event: ReactClipboardEvent<HTMLDivElement>) => {
+    const editor = editorRef.current
+    const selection = window.getSelection()
+    const line = getSelectedLine()
+    if (!editor || !selection?.rangeCount || !line) return
+
+    event.preventDefault()
+    const range = selection.getRangeAt(0)
+    range.deleteContents()
+    range.insertNode(document.createTextNode(event.clipboardData.getData("text")))
+    const normalizedValue = normalizeInformationArchitectureBulletList(readEditor())
+    renderEditor(normalizedValue)
+    onChange(normalizedValue)
+    const lastLine = editor.lastElementChild
+    if (lastLine instanceof HTMLElement) setCaret(lastLine, lastLine.textContent?.length || 0)
+  }
+
+  return (
+    <div
+      aria-label="Information architecture text view"
+      className="nexus-scrollbar min-h-[360px] flex-1 overflow-auto rounded-[12px] border border-[var(--nexus-border)] bg-white p-4 text-[14px] leading-8 outline-none focus-within:border-[var(--nexus-green)]/40 focus-within:ring-2 focus-within:ring-[var(--nexus-green)]/10"
+      contentEditable
+      onBlur={() => {
+        const normalizedValue = normalizeInformationArchitectureBulletList(readEditor())
+        renderEditor(normalizedValue)
+        onChange(normalizedValue)
+      }}
+      onInput={emitEditorChange}
+      onKeyDown={handleKeyDown}
+      onPaste={handlePaste}
+      ref={editorRef}
+      role="textbox"
+      spellCheck={false}
+      suppressContentEditableWarning
+    />
+  )
 }
 
 // Renders the screen root and semantic descendants as an ordered vertical tree.
@@ -1689,7 +2733,7 @@ function InformationArchitectureGraph({
     <div className="relative min-w-[420px] pb-1">
       <div className="ml-8 flex h-10 items-center gap-4">
         <span className="flex size-10 shrink-0 items-center justify-center rounded-full border border-[var(--nexus-border)] bg-[var(--nexus-preview)] text-[#172036]">
-          <HugeiconsIcon icon={WorkflowSquare08Icon} size={24} strokeWidth={1.5} />
+          <HugeiconsIcon icon={HierarchySquare01Icon} size={24} strokeWidth={1.5} />
         </span>
         <p className="truncate text-[18px] font-semibold leading-9">{screenName}</p>
       </div>
@@ -1910,9 +2954,9 @@ function deleteInformationArchitectureNode(
 
   return nodes.map((node, nodeIndex) => nodeIndex === index
     ? {
-        ...node,
-        children: deleteInformationArchitectureNode(node.children, remainingPath),
-      }
+      ...node,
+      children: deleteInformationArchitectureNode(node.children, remainingPath),
+    }
     : node
   )
 }
@@ -1935,8 +2979,8 @@ function countEditableInformationArchitectureNodes(
 ): number {
   return nodes.reduce((total, node) => (
     total
-      + (predicate(node) ? 1 : 0)
-      + countEditableInformationArchitectureNodes(node.children, predicate)
+    + (predicate(node) ? 1 : 0)
+    + countEditableInformationArchitectureNodes(node.children, predicate)
   ), 0)
 }
 

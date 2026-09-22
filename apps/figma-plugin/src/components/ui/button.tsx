@@ -1,4 +1,5 @@
 import { cva, type VariantProps } from "class-variance-authority"
+import { forwardRef } from "react"
 
 import { cn } from "../../lib/utils"
 
@@ -30,14 +31,17 @@ const buttonVariants = cva(
 type ButtonProps = React.ComponentProps<"button"> & VariantProps<typeof buttonVariants>
 
 // Shared shadcn-style button primitive used across the plugin UI.
-export function Button({ className, size, type = "button", variant, ...props }: ButtonProps) {
-  return (
+export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
+  ({ className, size, type = "button", variant, ...props }, ref) => (
     <button
       className={cn(buttonVariants({ className, size, variant }))}
+      ref={ref}
       type={type}
       {...props}
     />
   )
-}
+)
+
+Button.displayName = "Button"
 
 export { buttonVariants }

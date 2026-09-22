@@ -92,7 +92,7 @@ export async function saveDatabaseRecords(records: ScreenRecord[]) {
     )
   }
 
-  if (persistedRecords.length === 0) return
+  if (persistedRecords.length === 0) return persistedRecords
 
   await supabaseRequest(`/rest/v1/${tableName}?on_conflict=id`, {
     body: JSON.stringify(persistedRecords.map((record) => ({
@@ -114,6 +114,8 @@ export async function saveDatabaseRecords(records: ScreenRecord[]) {
     },
     method: "POST",
   })
+
+  return persistedRecords
 }
 
 // Uploads newly exported data URLs and stores only their public URL in Postgres.
@@ -141,7 +143,7 @@ async function persistPreviewImage(record: ScreenRecord): Promise<ScreenRecord> 
   const { url } = getSupabaseConfig()
   return {
     ...record,
-    previewImageDataUrl: `${url}/storage/v1/object/public/${bucketName}/${encodeURIComponent(path)}`,
+    previewImageDataUrl: `${url}/storage/v1/object/public/${bucketName}/${encodeURIComponent(path)}?v=${encodeURIComponent(record.updatedAt)}`,
   }
 }
 
@@ -165,5 +167,6 @@ function getPreviewPath(previewUrl?: string | null) {
   const marker = `/storage/v1/object/public/${bucketName}/`
   const markerIndex = previewUrl.indexOf(marker)
   if (markerIndex === -1) return undefined
-  return decodeURIComponent(previewUrl.slice(markerIndex + marker.length))
+  const path = previewUrl.slice(markerIndex + marker.length).split(/[?#]/, 1)[0]
+  return decodeURIComponent(path)
 }

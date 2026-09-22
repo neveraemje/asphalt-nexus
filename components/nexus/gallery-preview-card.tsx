@@ -68,14 +68,14 @@ export function GalleryPreviewCard({
               rel="noreferrer"
               target="_blank"
             >
-              Open source
+              Open screen
             </a>
           ) : (
             <span
               aria-disabled="true"
               className="inline-flex h-10 min-w-0 flex-1 items-center justify-center rounded-[32px] border border-[var(--nexus-border)] bg-white px-3 text-xs font-semibold text-[#8b8b8b] opacity-60"
             >
-              Open source
+              Open screen
             </span>
           )}
           <Link

@@ -48,7 +48,7 @@ function SearchInput({
         aria-label="Search UI element"
         className="h-11 w-full rounded-full border border-[var(--nexus-border)] bg-[#f9f9f9] pl-11 pr-10 text-sm text-black outline-none transition placeholder:text-[#8b8b8b] focus:border-[#008a0d] focus:bg-white focus:ring-2 focus:ring-[#008a0d]/20"
         placeholder="Search all UI elements..."
-        type="search"
+        type="text"
         value={value}
         onChange={handleChange}
       />

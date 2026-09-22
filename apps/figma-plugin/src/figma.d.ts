@@ -64,8 +64,8 @@ type PluginMessage =
   | PushScreensMessage
   | { type: "remove-selection-node"; nodeId: string }
   | { type: "replace-selection"; title: string; app: string; platform: string }
-  | { type: "replace-record"; recordId: string; app: string; team: string; featureName: string; screenName: string; sourceUrl?: string }
   | { type: "resize"; width: number; height: number }
+  | UpdateScreenRecordMessage
   | { type: "update-information-architecture"; recordId: string; informationArchitecture: ScreenInformationArchitecture }
 
 type PluginToUiMessage =
@@ -73,7 +73,10 @@ type PluginToUiMessage =
   | { type: "information-architecture-saved"; recordId: string }
   | { type: "push-screens-failed" }
   | { type: "records-delete-failed"; recordIds: string[] }
+  | { type: "record-update-failed"; recordId: string }
+  | { type: "record-updated"; record: ScreenRecord }
   | { type: "records-loaded"; records: ScreenRecord[] }
+  | { type: "records-load-failed" }
   | { type: "record-deleted"; recordId: string }
   | { type: "records-deleted"; recordIds: string[] }
   | { type: "record-counts-updated"; record: ScreenRecord }
@@ -93,6 +96,22 @@ type PushScreenItem = {
   nodeId: string
   screenName: string
   sourceUrl?: string
+  tags?: string[]
+}
+
+type UpdateScreenRecordMessage = {
+  type: "update-record"
+  app: string
+  featureName: string
+  recordId: string
+  screenName: string
+  tags: string[]
+  team: string
+  replacement?: {
+    keepInformationArchitecture: boolean
+    nodeId: string
+    sourceUrl?: string
+  }
 }
 
 type SelectionNodeSummary = {
@@ -131,6 +150,7 @@ type ScreenRecord = {
   storageTargetTeamId: string
   storageTargetTeamUrl: string
   team: string
+  tags?: string[]
   updatedAt: string
   viewCount: number
 }
@@ -178,6 +198,7 @@ type ScreenInformationArchitecture = {
   analysisMode: "preview-container" | "structure-first" | "unavailable"
   coverageNote: string
   elementCount: number
+  freeformText?: string
   generatedAt: string
   purpose: string
   regions: InformationArchitectureNode[]

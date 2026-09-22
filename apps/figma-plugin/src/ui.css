@@ -166,3 +166,24 @@ button {
   scrollbar-color: var(--nexus-border-strong) transparent;
   scrollbar-width: thin;
 }
+
+.nexus-skeleton {
+  background: linear-gradient(
+    100deg,
+    var(--nexus-preview) 20%,
+    #f7f7f7 40%,
+    var(--nexus-preview) 60%
+  );
+  background-size: 200% 100%;
+  animation: nexus-shimmer 1.6s ease-in-out infinite;
+}
+
+@keyframes nexus-shimmer {
+  0% {
+    background-position: 200% 0;
+  }
+
+  100% {
+    background-position: -200% 0;
+  }
+}
